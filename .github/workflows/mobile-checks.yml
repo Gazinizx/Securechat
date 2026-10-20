@@ -1,0 +1,35 @@
+name: SecureChat mobile checks
+on:
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-checks.yml"
+  push:
+    branches: ["main", "flutter-firebase-mvp"]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-checks.yml"
+permissions:
+  contents: read
+jobs:
+  analyze-android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate native project skeleton
+        run: flutter create . --platforms=android,ios
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Static analysis
+        run: flutter analyze
+      - name: Unit tests
+        run: flutter test
+      - name: Build Android debug APK
+        run: flutter build apk --debug
