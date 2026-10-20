@@ -87,7 +87,7 @@ class _GhostModeScreenState extends State<GhostModeScreen> {
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
   @override
-  Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('Ayarlar')), body: const ListView(children: [
+  Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('Ayarlar')), body: ListView(children: const [
     ListTile(leading: Icon(Icons.lock_outline), title: Text('Güvenlik'), subtitle: Text('Anahtar doğrulama ve cihaz güvenliği')),
     ListTile(leading: Icon(Icons.notifications_none), title: Text('Bildirimler'), subtitle: Text('Mesaj önizlemelerini gizle')),
     ListTile(leading: Icon(Icons.privacy_tip_outlined), title: Text('Gizlilik'), subtitle: Text('Hayalet Mod ve yerel veri temizliği')),
