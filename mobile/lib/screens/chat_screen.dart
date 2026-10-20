@@ -109,12 +109,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _deleteReadGhostMessages() async {
     try {
+      final conversation = await _conversation.get();
+      final members = List<String>.from(conversation.data()?['members'] ?? const <String>[]);
+      if (members.isEmpty) return;
       final snap = await _messages.where('ghost', isEqualTo: true).get();
       final batch = FirebaseBootstrap.db.batch();
       var count = 0;
       for (final doc in snap.docs) {
         final readBy = List<String>.from(doc.data()['readBy'] ?? const <String>[]);
-        if (readBy.contains(_uid)) {
+        if (members.every(readBy.contains)) {
           batch.delete(doc.reference);
           count++;
           if (count == 400) break; // Firestore batch operation safety margin.
