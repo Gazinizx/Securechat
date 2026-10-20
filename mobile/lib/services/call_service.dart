@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'firebase_bootstrap.dart';
@@ -15,6 +16,7 @@ class CallService {
 
   RTCPeerConnection? _peer;
   MediaStream? _local;
+  bool _answerApplied = false;
   Stream<QuerySnapshot<Map<String, dynamic>>>? _candidateStream;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   DocumentReference<Map<String, dynamic>> get _call =>
@@ -78,10 +80,10 @@ class CallService {
       _subscriptions.add(_call.snapshots().listen((snapshot) async {
         final data = snapshot.data();
         final answer = data?['answer'];
-        if (answer != null && _peer?.getRemoteDescription() != null) return;
-        if (answer != null) {
+        if (answer != null && !_answerApplied) {
           try {
             await _peer?.setRemoteDescription(RTCSessionDescription(answer['sdp'], answer['type']));
+            _answerApplied = true;
             onStatus('Bağlandı');
           } catch (_) {}
         }
