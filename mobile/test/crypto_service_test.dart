@@ -29,8 +29,8 @@ void main() {
       sharedSecret: secret,
       conversationId: conversation,
     );
-    expect(
-      () => CryptoService.decryptText(
+    await expectLater(
+      CryptoService.decryptText(
         payload: encrypted,
         sharedSecret: 'a-different-demo-secret',
         conversationId: conversation,
