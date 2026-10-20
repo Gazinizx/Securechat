@@ -1,7 +1,10 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../services/profile_service.dart';
 import 'chat_screen.dart';
+import 'call_screen.dart';
+import '../services/firebase_bootstrap.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -42,6 +45,42 @@ class _HomeScreenState extends State<HomeScreen> {
     finally { if (mounted) setState(() => _busy = false); }
   }
 
+  Widget _incomingCalls() {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseBootstrap.db.collection('calls')
+          .where('calleeUid', isEqualTo: uid)
+          .where('status', isEqualTo: 'ringing')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 16),
+            const Text('Gelen arama', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            for (final call in snapshot.data!.docs)
+              Card(
+                child: ListTile(
+                  leading: Icon((call.data()['audioOnly'] == true) ? Icons.call : Icons.videocam, color: const Color(0xFF69E6B1)),
+                  title: Text((call.data()['audioOnly'] == true) ? 'Gelen sesli arama' : 'Gelen görüntülü arama'),
+                  subtitle: const Text('Yanıtlamak için dokun'),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => CallScreen(
+                      callId: call.id,
+                      peerUid: call.data()['callerUid'] as String,
+                      isCaller: false,
+                      audioOnly: call.data()['audioOnly'] == true,
+                    ),
+                  )),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   void dispose() { _username.dispose(); _search.dispose(); super.dispose(); }
 
@@ -54,6 +93,7 @@ class _HomeScreenState extends State<HomeScreen> {
       const Text('Kişiler', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
       const SizedBox(height: 8),
       const Text('Kullanıcı adıyla kişi bul ve sohbet başlat.'),
+      _incomingCalls(),
       const SizedBox(height: 14),
       TextField(controller: _search, decoration: InputDecoration(labelText: 'Kullanıcı adı', prefixIcon: const Icon(Icons.search), suffixIcon: IconButton(onPressed: _busy ? null : _find, icon: const Icon(Icons.arrow_forward)), border: const OutlineInputBorder()), onSubmitted: (_) => _find()),
       const SizedBox(height: 28),
