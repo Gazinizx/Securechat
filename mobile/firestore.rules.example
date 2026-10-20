@@ -70,6 +70,8 @@ service cloud.firestore {
         allow update: if signedIn() && participant(conversationId)
           && resource.data.senderUid != request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy'])
+          && request.resource.data.readBy.hasAll(resource.data.readBy)
+          && request.resource.data.readBy.hasOnly(resource.data.readBy.concat([request.auth.uid]))
           && request.auth.uid in request.resource.data.readBy;
         allow delete: if signedIn() && participant(conversationId);
       }
