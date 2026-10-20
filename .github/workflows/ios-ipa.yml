@@ -1,0 +1,47 @@
+name: iOS IPA
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "rebuild/**"]
+permissions:
+  contents: read
+jobs:
+  build:
+    # A signed IPA requires Apple signing assets and a macOS runner.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter create --platforms=android,ios .
+      - run: flutter analyze
+      - name: Import Apple signing certificate
+        if: ${{ secrets.IOS_P12_BASE64 != '' && secrets.IOS_P12_PASSWORD != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+        env:
+          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          echo "$IOS_P12_BASE64" | base64 --decode > signing.p12
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > profile.mobileprovision
+          security create-keychain -p temp build.keychain
+          security import signing.p12 -k build.keychain -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s build.keychain
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp profile.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/profile.mobileprovision"
+      - name: Build signed IPA
+        if: ${{ secrets.IOS_P12_BASE64 != '' && secrets.IOS_P12_PASSWORD != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' && secrets.IOS_TEAM_ID != '' }}
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: flutter build ipa --release --export-options-plist=ios/ExportOptions.plist --dart-define=SUPABASE_URL="$SUPABASE_URL" --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: securechat-ios-ipa
+          path: build/ios/ipa/*.ipa
+          if-no-files-found: warn
