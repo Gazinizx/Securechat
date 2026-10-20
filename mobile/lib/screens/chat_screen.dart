@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../services/crypto_service.dart';
 import '../services/attachment_service.dart';
 import '../widgets/attachment_message.dart';
+import 'call_screen.dart';
 import '../services/firebase_bootstrap.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -47,6 +48,14 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) {
       if (mounted) setState(() => _error = 'Sohbet açılamadı: $e');
     }
+  }
+
+  Future<void> _startCall({required bool audioOnly}) async {
+    final callId = _uuid.v4();
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => CallScreen(callId: callId, peerUid: widget.peerUid, isCaller: true, audioOnly: audioOnly),
+    ));
   }
 
   Future<void> _pickAttachment() async {
@@ -147,8 +156,8 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text('@${widget.peerUsername}'), actions: [
-      IconButton(tooltip: 'Sesli arama (henüz bağlanmadı)', onPressed: () => _showCallNotice(context), icon: const Icon(Icons.call)),
-      IconButton(tooltip: 'Görüntülü arama (henüz bağlanmadı)', onPressed: () => _showCallNotice(context), icon: const Icon(Icons.videocam)),
+      IconButton(tooltip: 'Sesli arama', onPressed: () => _startCall(audioOnly: true), icon: const Icon(Icons.call)),
+      IconButton(tooltip: 'Görüntülü arama', onPressed: () => _startCall(audioOnly: false), icon: const Icon(Icons.videocam)),
     ]),
     body: Column(children: [
       Padding(padding: const EdgeInsets.fromLTRB(12, 8, 12, 0), child: TextField(
@@ -200,9 +209,5 @@ class _ChatScreenState extends State<ChatScreen> {
         IconButton.filled(onPressed: _busy ? null : _send, icon: const Icon(Icons.send)),
       ]))),
     ]),
-  );
-
-  void _showCallNotice(BuildContext context) => ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(content: Text('WebRTC sesli/görüntülü arama henüz uygulanmadı.')),
   );
 }
