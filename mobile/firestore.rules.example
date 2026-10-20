@@ -6,6 +6,32 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/conversations/$(conversationId))
         && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.members;
     }
+    function callParticipant(callId) {
+      return exists(/databases/$(database)/documents/calls/$(callId))
+        && (request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid
+          || request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid);
+    }
+    match /calls/{callId} {
+      allow create: if signedIn()
+        && request.resource.data.callerUid == request.auth.uid
+        && request.resource.data.calleeUid is string
+        && request.resource.data.calleeUid != request.auth.uid
+        && request.resource.data.status == 'preparing';
+      allow read: if signedIn()
+        && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
+      allow update: if signedIn()
+        && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid)
+        && request.resource.data.callerUid == resource.data.callerUid
+        && request.resource.data.calleeUid == resource.data.calleeUid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['offer', 'answer', 'status']);
+      allow delete: if false;
+      match /{candidateCollection}/{candidateId} {
+        allow read, create: if signedIn()
+          && callParticipant(callId)
+          && candidateCollection in ['callerCandidates', 'calleeCandidates'];
+        allow update, delete: if false;
+      }
+    }
     match /usernames/{username} {
       allow get: if signedIn();
       allow list: if false;
@@ -36,9 +62,11 @@ service cloud.firestore {
         allow read: if signedIn() && participant(conversationId);
         allow create: if signedIn() && participant(conversationId)
           && request.resource.data.senderUid == request.auth.uid
-          && request.resource.data.ciphertext is string
+          && request.resource.data.kind in ['text', 'photo', 'video']
           && request.resource.data.nonce is string
-          && request.resource.data.mac is string;
+          && request.resource.data.mac is string
+          && (request.resource.data.kind != 'text' || request.resource.data.ciphertext is string)
+          && (request.resource.data.kind == 'text' || request.resource.data.storagePath is string);
         allow update: if signedIn() && participant(conversationId)
           && resource.data.senderUid != request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy'])
