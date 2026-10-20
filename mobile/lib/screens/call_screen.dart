@@ -92,14 +92,14 @@ class _CallScreenState extends State<CallScreen> {
           Positioned.fill(
             child: widget.audioOnly
               ? const Center(child: Icon(Icons.account_circle, size: 110, color: Colors.white54))
-              : RTCVideoView(_remoteRenderer, objectFit: RTCVideoViewObjectFit.RFC),
+              : RTCVideoView(_remoteRenderer, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover),
           ),
           if (!widget.audioOnly)
             Positioned(
               right: 16, top: 16, width: 110, height: 160,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: RTCVideoView(_localRenderer, mirror: true, objectFit: RTCVideoViewObjectFit.RFC),
+                child: RTCVideoView(_localRenderer, mirror: true, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover),
               ),
             ),
           Positioned(
