@@ -127,6 +127,10 @@ class _ChatScreenState extends State<ChatScreen> {
       for (final doc in snap.docs) {
         final readBy = List<String>.from(doc.data()['readBy'] ?? const <String>[]);
         if (members.every(readBy.contains)) {
+          final storagePath = doc.data()['storagePath'];
+          if (storagePath is String && storagePath.isNotEmpty) {
+            try { await FirebaseBootstrap.storage.ref(storagePath).delete(); } catch (_) {}
+          }
           batch.delete(doc.reference);
           count++;
           if (count == 400) break; // Firestore batch operation safety margin.
