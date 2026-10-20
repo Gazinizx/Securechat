@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../services/crypto_service.dart';
+import '../services/attachment_service.dart';
+import '../widgets/attachment_message.dart';
 import '../services/firebase_bootstrap.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -44,6 +46,26 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (e) {
       if (mounted) setState(() => _error = 'Sohbet açılamadı: $e');
+    }
+  }
+
+  Future<void> _pickAttachment() async {
+    if (_secret.text.trim().length < 16) {
+      setState(() => _error = 'Önce en az 16 karakterlik ortak sohbet anahtarını gir.');
+      return;
+    }
+    setState(() { _busy = true; _error = null; });
+    try {
+      await AttachmentService.pickAndSend(
+        conversationId: _conversationId,
+        senderUid: _uid,
+        sharedSecret: _secret.text,
+        ghost: _ghost,
+      );
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -157,17 +179,19 @@ class _ChatScreenState extends State<ChatScreen> {
                 margin: const EdgeInsets.symmetric(vertical: 4),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(color: mine ? const Color(0xFF174B3D) : const Color(0xFF172238), borderRadius: BorderRadius.circular(16)),
-                child: FutureBuilder<String>(
-                  future: _decrypt(data),
-                  builder: (_, value) => Text(value.data ?? 'Şifre çözülüyor…'),
-                ),
+                child: data['kind'] == 'photo' || data['kind'] == 'video'
+                    ? AttachmentMessage(message: data, sharedSecret: _secret.text, conversationId: _conversationId)
+                    : FutureBuilder<String>(
+                        future: _decrypt(data),
+                        builder: (_, value) => Text(value.data ?? 'Şifre çözülüyor…'),
+                      ),
               ));
             },
           );
         },
       )),
       SafeArea(child: Padding(padding: const EdgeInsets.all(10), child: Row(children: [
-        IconButton(tooltip: 'Fotoğraf/video modülü sıradaki adımda', onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Şifreli fotoğraf/video gönderimi henüz tamamlanmadı.'))), icon: const Icon(Icons.attach_file)),
+        IconButton(tooltip: 'Şifreli fotoğraf/video gönder', onPressed: _busy ? null : _pickAttachment, icon: const Icon(Icons.attach_file)),
         Expanded(child: TextField(controller: _text, minLines: 1, maxLines: 4, decoration: const InputDecoration(hintText: 'Şifreli mesaj yaz…', border: OutlineInputBorder()), onSubmitted: (_) => _send())),
         const SizedBox(width: 8),
         IconButton.filled(onPressed: _busy ? null : _send, icon: const Icon(Icons.send)),
