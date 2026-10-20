@@ -3,28 +3,31 @@
 Android and iOS client foundation. This is not production-ready and has not been security-audited.
 
 ## Local setup
-1. Install Flutter and the Firebase CLI.
+1. Install Flutter stable and the Firebase CLI.
 2. From the repository root: `cd mobile`
-3. Install FlutterFire CLI and configure both platforms:
+3. Generate Android/iOS native project files: `flutter create . --platforms=android,ios`
+4. Install and run FlutterFire configuration:
    `dart pub global activate flutterfire_cli`
    `flutterfire configure`
-4. Ensure Firebase Authentication (Email/Password), Cloud Firestore, and Firebase Storage are enabled in the Firebase console.
-5. Run `flutter pub get`, then `flutter run` on Android or iOS.
-
-FlutterFire generates platform files (including `firebase_options.dart`) from your own Firebase project. Do not commit service-account JSON or Firebase Admin credentials into the app. Client configuration is not a substitute for restrictive Security Rules.
+5. Enable Firebase Authentication (Email/Password), Cloud Firestore, and Firebase Storage in your Firebase console.
+6. Add the generated `google-services.json` and `GoogleService-Info.plist` through FlutterFire setup; never add Firebase Admin/service-account credentials to a client.
+7. Add Android microphone/camera permissions and iOS `NSMicrophoneUsageDescription` / `NSCameraUsageDescription` entries before testing calls.
+8. Run `flutter pub get`, then `flutter run` on Android or iOS.
 
 ## Current scaffold
 - Email/password account flow
 - Unique lowercase username reservation and username lookup
 - Direct-chat UI
-- AES-256-GCM encryption utility for text payloads using a shared secret
-- Ghost-mode UI and best-effort deletion hook
+- AES-256-GCM text and attachment payload encryption using a user-shared secret
+- Encrypted photo/video upload and client-side decrypt/viewer
+- Initial WebRTC audio/video call signaling and call screen
+- Ghost-mode read tracking and best-effort deletion when leaving a chat
 
-## Not implemented / not verified yet
-- Signal Protocol / Double Ratchet, prekeys, key verification, forward secrecy and secure multi-device key management
-- Production-grade read receipts and server-enforced disappearing messages
-- Encrypted photo/video/file transfer and Firebase Storage rules
-- WebRTC voice/video calls, call signaling, TURN configuration, push notifications and call lifecycle
-- Android/iOS build, Firebase project integration, automated tests, dependency audit and independent security audit
+## Required before real users
+- Deploy and test `firestore.rules.example` and `storage.rules.example` after review; these examples are not automatically deployed.
+- Configure TURN servers for reliable calls. The sample STUN-only setup is not enough for many real networks.
+- Add push notifications, call timeout/retry, offline handling, attachment type validation, and automated integration tests.
+- Replace shared-secret keying with a reviewed Signal Protocol implementation, safety-number verification, forward secrecy, and secure multi-device key management.
+- Run dependency scanning, platform builds, penetration testing, and an independent cryptographic review.
 
-**Important:** The current shared-secret AES-GCM helper is a starter only. Never market this build as “unhackable” or as equivalent to Signal/WhatsApp E2EE. Firebase server rules must be configured before real user data is stored. Ghost mode cannot stop screenshots, screen recording, notification previews, or copies made by recipients.
+**Important:** This is a development scaffold, not a production-secure messenger. Ghost mode cannot prevent screenshots, screen recordings, camera photos, or copies made by recipients. Deletion cannot erase content already copied or backed up.
