@@ -23,17 +23,39 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _error;
   String get _uid => FirebaseAuth.instance.currentUser!.uid;
   String get _conversationId => ([_uid, widget.peerUid]..sort()).join('_');
-  CollectionReference<Map<String, dynamic>> get _messages =>
-      FirebaseBootstrap.db.collection('conversations').doc(_conversationId).collection('messages');
+  DocumentReference<Map<String, dynamic>> get _conversation =>
+      FirebaseBootstrap.db.collection('conversations').doc(_conversationId);
+  CollectionReference<Map<String, dynamic>> get _messages => _conversation.collection('messages');
+
+  @override
+  void initState() {
+    super.initState();
+    _ensureConversation();
+  }
+
+  Future<void> _ensureConversation() async {
+    try {
+      final snap = await _conversation.get();
+      if (!snap.exists) {
+        await _conversation.set({
+          'members': ([_uid, widget.peerUid]..sort()),
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Sohbet açılamadı: $e');
+    }
+  }
 
   Future<void> _send() async {
     if (_text.text.trim().isEmpty) return;
     if (_secret.text.trim().length < 16) {
-      setState(() => _error = 'Sohbet için en az 16 karakterlik ortak gizli anahtar girin ve bunu güvenli kanaldan paylaşın.');
+      setState(() => _error = 'En az 16 karakterlik ortak gizli anahtar girin. Anahtarı başka bir güvenli kanaldan paylaşın.');
       return;
     }
     setState(() { _busy = true; _error = null; });
     try {
+      await _ensureConversation();
       final encrypted = await CryptoService.encryptText(
         plaintext: _text.text.trim(),
         sharedSecret: _secret.text,
@@ -49,7 +71,7 @@ class _ChatScreenState extends State<ChatScreen> {
         'clientId': _uuid.v4(),
       });
       _text.clear();
-    } catch (e) { setState(() => _error = e.toString()); }
+    } catch (e) { if (mounted) setState(() => _error = e.toString()); }
     finally { if (mounted) setState(() => _busy = false); }
   }
 
@@ -58,12 +80,27 @@ class _ChatScreenState extends State<ChatScreen> {
     if (data == null || data['senderUid'] == _uid) return;
     final readBy = List<String>.from(data['readBy'] ?? const <String>[]);
     if (!readBy.contains(_uid)) {
+      // Keep the message until the reader exits this conversation.
       await doc.reference.update({'readBy': FieldValue.arrayUnion([_uid])});
-      if (data['ghost'] == true) {
-        // Best-effort cleanup only. A production implementation needs server
-        // enforcement, TTL cleanup, and clear UX that screenshots remain possible.
-        await doc.reference.delete();
+    }
+  }
+
+  Future<void> _deleteReadGhostMessages() async {
+    try {
+      final snap = await _messages.where('ghost', isEqualTo: true).get();
+      final batch = FirebaseBootstrap.db.batch();
+      var count = 0;
+      for (final doc in snap.docs) {
+        final readBy = List<String>.from(doc.data()['readBy'] ?? const <String>[]);
+        if (readBy.contains(_uid)) {
+          batch.delete(doc.reference);
+          count++;
+          if (count == 400) break; // Firestore batch operation safety margin.
+        }
       }
+      if (count > 0) await batch.commit();
+    } catch (_) {
+      // Best effort only; Firestore rules/server cleanup must also be configured.
     }
   }
 
@@ -75,13 +112,18 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   @override
-  void dispose() { _text.dispose(); _secret.dispose(); super.dispose(); }
+  void dispose() {
+    _deleteReadGhostMessages();
+    _text.dispose();
+    _secret.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text('@${widget.peerUsername}'), actions: [
-      IconButton(tooltip: 'Sesli arama (kurulum aşamasında)', onPressed: () => _showCallNotice(context), icon: const Icon(Icons.call)),
-      IconButton(tooltip: 'Görüntülü arama (kurulum aşamasında)', onPressed: () => _showCallNotice(context), icon: const Icon(Icons.videocam)),
+      IconButton(tooltip: 'Sesli arama (henüz bağlanmadı)', onPressed: () => _showCallNotice(context), icon: const Icon(Icons.call)),
+      IconButton(tooltip: 'Görüntülü arama (henüz bağlanmadı)', onPressed: () => _showCallNotice(context), icon: const Icon(Icons.videocam)),
     ]),
     body: Column(children: [
       Padding(padding: const EdgeInsets.fromLTRB(12, 8, 12, 0), child: TextField(
@@ -90,14 +132,14 @@ class _ChatScreenState extends State<ChatScreen> {
       )),
       SwitchListTile(
         title: const Text('Hayalet mod'),
-        subtitle: const Text('Okunma sonrası silme denemesi; ekran görüntüsünü engellemez.'),
+        subtitle: const Text('Okuduktan sonra bu sohbetten çıkınca silme denemesi. Ekran görüntüsü engellenmez.'),
         value: _ghost, onChanged: (v) => setState(() => _ghost = v),
       ),
       if (_error != null) Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: _messages.orderBy('createdAt').snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return const Center(child: Text('Mesajlar yüklenemedi. Firebase kurallarını kontrol et.'));
+          if (snapshot.hasError) return const Center(child: Text('Mesajlar yüklenemedi. Firestore kurallarını kontrol et.'));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           final docs = snapshot.data!.docs;
           if (docs.isEmpty) return const Center(child: Text('İlk mesajı gönder.'));
@@ -125,7 +167,7 @@ class _ChatScreenState extends State<ChatScreen> {
         },
       )),
       SafeArea(child: Padding(padding: const EdgeInsets.all(10), child: Row(children: [
-        IconButton(tooltip: 'Fotoğraf/video gönderme altyapısı sıradaki aşamada', onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Fotoğraf/video şifreli yükleme modülü sıradaki aşamada eklenecek.'))), icon: const Icon(Icons.attach_file)),
+        IconButton(tooltip: 'Fotoğraf/video modülü sıradaki adımda', onPressed: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Şifreli fotoğraf/video gönderimi henüz tamamlanmadı.'))), icon: const Icon(Icons.attach_file)),
         Expanded(child: TextField(controller: _text, minLines: 1, maxLines: 4, decoration: const InputDecoration(hintText: 'Şifreli mesaj yaz…', border: OutlineInputBorder()), onSubmitted: (_) => _send())),
         const SizedBox(width: 8),
         IconButton.filled(onPressed: _busy ? null : _send, icon: const Icon(Icons.send)),
@@ -134,6 +176,6 @@ class _ChatScreenState extends State<ChatScreen> {
   );
 
   void _showCallNotice(BuildContext context) => ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(content: Text('Sesli/görüntülü arama arayüzü hazırlandı; WebRTC sinyalleşmesi ve cihaz testleri henüz tamamlanmadı.')),
+    const SnackBar(content: Text('WebRTC sesli/görüntülü arama henüz uygulanmadı.')),
   );
 }
