@@ -138,8 +138,25 @@ class _InboxScreenState extends State<InboxScreen> {
       final memberships = await _client.from('conversation_members').select('conversation_id').eq('user_id', uid);
       final ids = memberships.map((e) => e['conversation_id'] as String).toList();
       if (ids.isEmpty) { if (mounted) setState(() { _chats = []; _busy = false; _error = null; }); return; }
-      final rows = await _client.from('conversations').select('id,ghost_mode,created_at,conversation_members(user_id,profiles(username))').inFilter('id', ids).order('created_at', ascending: false);
-      if (mounted) setState(() { _chats = List<Map<String,dynamic>>.from(rows); _busy = false; _error = null; });
+      final rows = await _client.from('conversations').select('id,ghost_mode,created_at').inFilter('id', ids).order('created_at', ascending: false);
+      final memberRows = await _client.from('conversation_members').select('conversation_id,user_id').inFilter('conversation_id', ids);
+      final otherIds = memberRows.map((m) => m['user_id'] as String).where((id) => id != uid).toSet().toList();
+      final profileRows = otherIds.isEmpty ? <Map<String,dynamic>>[] : List<Map<String,dynamic>>.from(await _client.from('profiles').select('id,username').inFilter('id', otherIds));
+      final profiles = {for (final p in profileRows) p['id'] as String: p['username'] as String};
+      final membersByChat = <String,List<Map<String,dynamic>>>{};
+      for (final member in memberRows) {
+        final chatId = member['conversation_id'] as String;
+        membersByChat.putIfAbsent(chatId, () => []).add({
+          'user_id': member['user_id'],
+          'profiles': {'username': profiles[member['user_id']] ?? 'Kullanıcı'},
+        });
+      }
+      final chats = List<Map<String,dynamic>>.from(rows).map((row) {
+        final chat = Map<String,dynamic>.from(row);
+        chat['conversation_members'] = membersByChat[chat['id']] ?? [];
+        return chat;
+      }).toList();
+      if (mounted) setState(() { _chats = chats; _busy = false; _error = null; });
     } catch (e) { if (mounted) setState(() { _busy = false; _error = e.toString(); }); }
   }
   String _title(Map<String,dynamic> chat) {
