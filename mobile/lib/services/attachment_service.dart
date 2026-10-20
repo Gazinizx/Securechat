@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
@@ -42,9 +43,7 @@ class AttachmentService {
     final path = 'conversations/$conversationId/${doc.id}.bin';
 
     await FirebaseBootstrap.storage.ref(path).putData(
-      Uint8List.fromList(List<int>.from(encrypted['ciphertext'] == null
-          ? const <int>[]
-          : _decodeBase64(encrypted['ciphertext']!))),
+      Uint8List.fromList(base64Decode(encrypted['ciphertext']!)),
       SettableMetadata(contentType: 'application/octet-stream'),
     );
 
@@ -72,7 +71,7 @@ class AttachmentService {
 
   static List<int> _decodeBase64(String value) {
     // Kept local to avoid exposing the clear file or public download URL.
-    return Uri.parse('data:application/octet-stream;base64,$value').data!.contentAsBytes();
+    return base64Decode(value);
   }
 
   static Future<Uint8List> decryptAttachment({
