@@ -2,9 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:securechat/main.dart';
 
 void main() {
-  testWidgets('SecureChat inbox renders', (WidgetTester tester) async {
+  testWidgets('SecureChat renders setup guidance without Supabase configuration', (WidgetTester tester) async {
     await tester.pumpWidget(const SecureChatApp());
-    expect(find.text('SecureChat'), findsOneWidget);
-    expect(find.text('Henüz sohbet yok'), findsOneWidget);
+    expect(find.textContaining('SUPABASE_URL'), findsOneWidget);
   });
 }
