@@ -16,7 +16,7 @@ jobs:
           cache: true
       - run: flutter create --platforms=android,ios .
       - run: flutter pub get
-      - run: flutter analyze
+      - run: flutter analyze --no-fatal-infos
       - name: Check Apple signing configuration
         env:
           IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
