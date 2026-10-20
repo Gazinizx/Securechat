@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'self' https://*.supabase.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'self'; object-src 'none'">
+<title>SecureChat</title>
+<style>
+:root{color-scheme:dark;--bg:#090e19;--panel:#111a2b;--line:#243149;--text:#eef4ff;--muted:#93a4bd;--accent:#65e6b1;--sent:#174b3d}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#14263b,var(--bg) 60%);font:15px system-ui,-apple-system,sans-serif;color:var(--text);min-height:100vh;display:grid;place-items:center;padding:16px}
+.app{width:min(100%,760px);height:min(850px,94dvh);min-height:540px;background:#0c1422;border:1px solid var(--line);border-radius:24px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px #0007}
+header{display:flex;align-items:center;gap:12px;padding:18px 20px;border-bottom:1px solid var(--line);background:#111a2b}
+.logo{width:42px;height:42px;border-radius:14px;background:#153b32;display:grid;place-items:center;color:var(--accent);font-size:22px}
+h1{font-size:18px;margin:0}header p{margin:3px 0 0;color:var(--muted);font-size:12px}.lock{margin-left:auto;color:var(--accent);font-size:12px;border:1px solid #276b53;border-radius:99px;padding:6px 10px}
+.setup{padding:14px 18px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:9px;background:#0e1726}
+input,button{font:inherit;border-radius:11px;border:1px solid var(--line);padding:11px 12px;background:#101c2d;color:var(--text);min-width:0}
+input:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input::placeholder{color:#70829d}.wide{grid-column:1/-1}.actions{display:flex;gap:8px}.actions button{flex:1}
+button{cursor:pointer}button.primary{background:var(--accent);color:#062015;border-color:var(--accent);font-weight:700}
+.status{font-size:12px;color:var(--muted);padding:9px 18px;border-bottom:1px solid #1b283c}
+.messages{flex:1;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:12px}
+.empty{margin:auto;text-align:center;max-width:300px;color:var(--muted);line-height:1.6}.empty strong{display:block;color:var(--text);font-size:17px;margin-bottom:5px}
+.msg{max-width:82%;padding:11px 13px;border-radius:16px;background:#182338;border:1px solid #273650;align-self:flex-start;overflow-wrap:anywhere}
+.msg.mine{align-self:flex-end;background:var(--sent);border-color:#27634f}.meta{font-size:10px;color:#a9bad0;margin-bottom:5px}.body{white-space:pre-wrap;line-height:1.45}
+.composer{padding:14px;display:flex;gap:8px;border-top:1px solid var(--line);background:#101a2a}.composer input{flex:1}.composer button{width:82px}
+footer{padding:0 16px 12px;text-align:center;color:#73849d;font-size:10px}
+@media(max-width:520px){.app{height:96dvh;border-radius:18px}.setup{grid-template-columns:1fr}.wide{grid-column:auto}.lock{font-size:10px}.messages{padding:14px}}
+</style></head>
+<body><main class="app">
+<header><div class="logo">⛨</div><div><h1>SecureChat</h1><p>Önce gizlilik. Her mesaj cihazında şifrelenir.</p></div><div class="lock">● Şifreleme</div></header>
+<section class="setup" aria-label="Bağlantı ve sohbet ayarları">
+<input id="url" class="wide" placeholder="Supabase Project URL (https://...supabase.co)" autocomplete="url">
+<input id="anon" class="wide" placeholder="Supabase anon / publishable key" autocomplete="off">
+<div class="actions wide"><button id="connect" class="primary">Bağlan / Giriş</button><button id="logout">Çıkış</button></div>
+<input id="email" type="email" placeholder="E-posta" autocomplete="username">
+<input id="password" type="password" placeholder="Hesap şifresi" autocomplete="current-password">
+<input id="room" placeholder="Sohbet odası" value="genel" autocomplete="off">
+<input id="phrase" type="password" placeholder="Paylaşılan sohbet anahtarı" autocomplete="off">
+<div class="actions wide"><button id="login">Giriş / Kayıt</button><button id="join" class="primary">Odaya gir</button></div>
+</section>
+<div class="status" id="status" role="status" aria-live="polite">Başlamak için Supabase ayarlarını gir. Anahtarları veya şifreleri kimseyle paylaşma.</div>
+<section class="messages" id="messages" aria-label="Mesajlar"><div class="empty"><strong>Özel sohbet alanın</strong>Mesaj içeriği gönderilmeden önce şifrelenir. Oda anahtarını diğer katılımcıyla güvenli ve ayrı bir kanaldan paylaş.</div></section>
+<form class="composer" id="form"><input id="text" placeholder="Şifreli mesaj yaz..." maxlength="4000" autocomplete="off" aria-label="Mesaj" disabled><button class="primary" id="send" disabled>Gönder</button></form>
+<footer>İlk sürüm · Açık kaynak · Güvenlik denetimi yapılmadan hassas iletişim için kullanmayın.</footer>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(()=>{'use strict';
+const $=id=>document.getElementById(id);let client=null,user=null,channel=null,key=null,roomId=null,seen=new Set();
+const status=s=>$('status').textContent=s;
+const enc=new TextEncoder(),dec=new TextDecoder();
+const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b)));
+const un64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function derive(pass,salt){const material=await crypto.subtle.importKey('raw',enc.encode(pass),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:600000,hash:'SHA-256'},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
+async function encrypt(text){const iv=crypto.getRandomValues(new Uint8Array(12));const data=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,enc.encode(text));return {iv:b64(iv),ciphertext:b64(data)}}
+async function decrypt(row){const data=await crypto.subtle.decrypt({name:'AES-GCM',iv:un64(row.iv)},key,un64(row.ciphertext));return dec.decode(data)}
+function render(text,own,when){const empty=document.querySelector('.empty');if(empty)empty.remove();const el=document.createElement('article');el.className='msg'+(own?' mine':'');const meta=document.createElement('div');meta.className='meta';meta.textContent=(own?'Sen':'Katılımcı')+' · '+new Date(when).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});const body=document.createElement('div');body.className='body';body.textContent=text;el.append(meta,body);$('messages').append(el);$('messages').scrollTop=$('messages').scrollHeight}
+function settings(){const url=$('url').value.trim(),anon=$('anon').value.trim();if(!url||!anon)throw Error('Supabase URL ve anon/publishable key gerekli.');if(!url.startsWith('https://'))throw Error('Supabase adresi HTTPS olmalı.');return {url,anon}}
+async function init(){try{if(!window.supabase)throw Error('Supabase kütüphanesi yüklenemedi.');const s=settings();client=window.supabase.createClient(s.url,s.anon,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});const {data,error}=await client.auth.getSession();if(error)throw error;user=data.session?.user||null;status(user?'Bağlandı: '+user.email:'Bağlandı. E-posta ile giriş veya kayıt yap.');return true}catch(e){status(e.message);return false}}
+$('connect').onclick=async()=>{await init()};
+$('login').onclick=async()=>{try{if(!client&&!await init())return;const email=$('email').value.trim(),password=$('password').value;if(!email||password.length<12)throw Error('E-posta gir ve en az 12 karakterli hesap şifresi kullan.');let r=await client.auth.signInWithPassword({email,password});if(r.error&&/invalid login credentials/i.test(r.error.message))r=await client.auth.signUp({email,password});if(r.error)throw r.error;user=r.data.user;if(!r.data.session)throw Error('E-postanı doğrula, ardından giriş yap.');status('Giriş başarılı: '+user.email)}catch(e){status('Giriş hatası: '+e.message)}};
+$('logout').onclick=async()=>{if(client)await client.auth.signOut();user=null;key=null;status('Oturum kapatıldı.');$('text').disabled=true;$('send').disabled=true};
+$('join').onclick=async()=>{try{if(!client&&!await init())return;if(!user){const r=await client.auth.getUser();user=r.data.user}if(!user)throw Error('Önce giriş yap.');const room=$('room').value.trim(),pass=$('phrase').value;if(!/^[a-zA-Z0-9_-]{1,64}$/.test(room))throw Error('Oda adı 1-64 karakter; harf, sayı, _ veya - kullan.');if(pass.length<16)throw Error('Oda anahtarı en az 16 karakter olmalı.');if(!crypto.subtle)throw Error('Web Crypto gerekli; HTTPS veya localhost kullan.');if(channel)await client.removeChannel(channel);roomId=room;const salt=await crypto.subtle.digest('SHA-256',enc.encode('SecureChat room salt v1:'+room));key=await derive(pass,new Uint8Array(salt));$('messages').replaceChildren();seen.clear();const {data,error}=await client.from('chat_messages').select('id,room_id,sender_id,ciphertext,iv,created_at').eq('room_id',room).order('created_at',{ascending:true}).limit(100);if(error)throw error;for(const row of data||[])await showRow(row);channel=client.channel('securechat-'+room).on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_messages',filter:'room_id=eq.'+room},payload=>showRow(payload.new)).subscribe(s=>{if(s==='SUBSCRIBED')status('Şifreli odaya bağlandın: '+room);else if(s==='CHANNEL_ERROR')status('Gerçek zamanlı bağlantı başarısız. Supabase Realtime ayarlarını kontrol et.')});$('text').disabled=false;$('send').disabled=false}catch(e){status('Odaya giriş başarısız: '+e.message)}};
+async function showRow(row){if(seen.has(row.id)||!key||row.room_id!==roomId)return;seen.add(row.id);try{const text=await decrypt(row);render(text,row.sender_id===user?.id,row.created_at)}catch{const el=document.createElement('div');el.className='msg';el.textContent='Bu mesaj çözülemedi. Oda anahtarı farklı olabilir veya mesaj bozulmuş olabilir.';$('messages').append(el)}}
+$('form').onsubmit=async e=>{e.preventDefault();const text=$('text').value;if(!text.trim()||!key||!client||!user)return;const btn=$('send');btn.disabled=true;try{const encrypted=await encrypt(text);const {data,error}=await client.from('chat_messages').insert({room_id:roomId,sender_id:user.id,...encrypted}).select('id,room_id,sender_id,ciphertext,iv,created_at').single();if(error)throw error;if(data)await showRow(data);$('text').value=''}catch(e){status('Gönderilemedi: '+e.message)}finally{btn.disabled=false;$('text').focus()}};
+})();
+</script></body></html>
