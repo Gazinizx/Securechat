@@ -175,7 +175,7 @@ class _InboxScreenState extends State<InboxScreen> {
           TextField(controller: controller, autofocus: true, decoration: const InputDecoration(labelText: 'Kullanıcı adı')),
           SwitchListTile(value: ghost, onChanged: (v) => setDialogState(() => ghost = v), title: const Text('Hayalet Mod')),
         ]),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('İptal')), FilledButton(onPressed: () => Navigator.pop(context, {'username': controller.text.trim(), 'ghost': ghost}), child: const Text('Oluştur'))]);
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('İptal')), FilledButton(onPressed: () => Navigator.pop(context, {'username': controller.text.trim(), 'ghost': ghost}), child: const Text('Oluştur'))]));
     });
     if (result == null || (result['username'] as String).isEmpty || !mounted) return;
     try {
