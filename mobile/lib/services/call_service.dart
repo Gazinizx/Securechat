@@ -70,13 +70,13 @@ class CallService {
       await _call.set({
         'callerUid': localUid,
         'calleeUid': peerUid,
-        'status': 'ringing',
+        'status': 'preparing',
         'audioOnly': audioOnly,
         'createdAt': FieldValue.serverTimestamp(),
       });
       final offer = await _peer!.createOffer();
       await _peer!.setLocalDescription(offer);
-      await _call.update({'offer': {'type': offer.type, 'sdp': offer.sdp}});
+      await _call.update({'offer': {'type': offer.type, 'sdp': offer.sdp}, 'status': 'ringing'});
       _subscriptions.add(_call.snapshots().listen((snapshot) async {
         final data = snapshot.data();
         final answer = data?['answer'];
