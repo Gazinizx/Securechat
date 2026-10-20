@@ -1,23 +1,21 @@
 # SecureChat
 
-A minimal browser-based end-to-end encrypted chat starter.
+Flutter starter for Android and iOS with Supabase integration scaffolding.
 
-## Security model
-- Message bodies are encrypted in the browser with Web Crypto AES-GCM before being sent to the database.
-- The encryption key is derived locally from a room passphrase using PBKDF2-SHA-256 and a per-room salt.
-- The server stores ciphertext, IV, and room identifier; it must never receive the passphrase.
-- Use a long, unique passphrase and share it with recipients through a separate trusted channel.
-- This is an MVP, not a professionally audited secure messenger. It does not implement the Signal Protocol / Double Ratchet, forward secrecy, identity verification, secure multi-device key management, or metadata protection. Do not use it for highly sensitive communications until independently reviewed.
+## Honest status
+This is a foundation, not a finished secure messenger. The inbox and settings screens are UI scaffolding. Production authentication, real-time messaging, verified end-to-end encryption, media transfer, push notifications, audio/video calling, and the two-device Ghost Mode deletion protocol are not implemented yet. Do not use for sensitive communication or publish as a finished product.
 
-## Run
+## Setup
 1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the Supabase SQL Editor.
-3. Open `index.html` from a local web server (HTTPS is required outside localhost).
-4. Enter your Supabase Project URL and anon/publishable key in the app. These are public client settings, not service-role secrets.
-5. Choose the same room name and a strong shared passphrase on both devices.
+2. Review and run `supabase/schema.sql` only after reviewing the access policies.
+3. Configure GitHub Actions secrets `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+4. Never put a Supabase service-role key in a mobile app.
 
-## Important
-- Never put a Supabase service-role key in this app.
-- Database access is restricted to authenticated users by RLS. For the starter, users must sign in with Supabase Auth before reading or sending messages.
-- Keep the room passphrase out of chat messages.
-- No security claim is a guarantee that there are zero vulnerabilities. Have the code and deployment independently audited before production use.
+## Android
+The GitHub Actions workflow can produce a release APK artifact after a successful build. Open Actions, run Android APK, and download its artifact.
+
+## iOS
+A signed IPA requires Apple Developer signing credentials and a provisioning profile. Configure `IOS_P12_BASE64`, `IOS_P12_PASSWORD`, `IOS_PROVISIONING_PROFILE_BASE64`, `IOS_TEAM_ID`, and the matching bundle ID before running the workflow.
+
+## Security plan
+Use a reviewed E2EE protocol and vetted implementation; do not invent cryptography. Store private keys in platform secure storage, encrypt media on-device, minimize metadata, protect every database row with tested RLS, and independently audit before release. No app can guarantee zero vulnerabilities or erase screenshots/external copies.
