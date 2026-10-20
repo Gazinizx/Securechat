@@ -17,7 +17,8 @@ class CallService {
   RTCPeerConnection? _peer;
   MediaStream? _local;
   bool _answerApplied = false;
-  Stream<QuerySnapshot<Map<String, dynamic>>>? _candidateStream;
+  bool _remoteDescriptionSet = false;
+  final List<RTCIceCandidate> _pendingCandidates = [];
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   DocumentReference<Map<String, dynamic>> get _call =>
       FirebaseBootstrap.db.collection('calls').doc(callId);
@@ -84,6 +85,8 @@ class CallService {
           try {
             await _peer?.setRemoteDescription(RTCSessionDescription(answer['sdp'], answer['type']));
             _answerApplied = true;
+            _remoteDescriptionSet = true;
+            await _applyPendingCandidates();
             onStatus('Bağlandı');
           } catch (_) {}
         }
@@ -97,6 +100,8 @@ class CallService {
       final offer = snap.data()?['offer'];
       if (offer == null) throw StateError('Arama teklifi bulunamadı.');
       await _peer!.setRemoteDescription(RTCSessionDescription(offer['sdp'], offer['type']));
+      _remoteDescriptionSet = true;
+      await _applyPendingCandidates();
       final answer = await _peer!.createAnswer();
       await _peer!.setLocalDescription(answer);
       await _call.update({
@@ -115,15 +120,27 @@ class CallService {
         final data = change.doc.data();
         if (data == null) continue;
         try {
-          await _peer?.addCandidate(RTCIceCandidate(
+          final candidate = RTCIceCandidate(
             data['candidate'] as String?,
             data['sdpMid'] as String?,
             data['sdpMLineIndex'] as int?,
-          ));
+          );
+          if (!_remoteDescriptionSet) {
+            _pendingCandidates.add(candidate);
+          } else {
+            await _peer?.addCandidate(candidate);
+          }
         } catch (_) {}
       }
     });
     _subscriptions.add(sub);
+  }
+
+  Future<void> _applyPendingCandidates() async {
+    for (final candidate in _pendingCandidates) {
+      try { await _peer?.addCandidate(candidate); } catch (_) {}
+    }
+    _pendingCandidates.clear();
   }
 
   Future<void> toggleMicrophone() async {
