@@ -29,6 +29,7 @@ create table if not exists public.encrypted_messages (
   key_version integer not null default 1,
   read_at timestamptz,
   delete_after_read boolean not null default false,
+  media_path text,
   created_at timestamptz not null default now()
 );
 
@@ -186,3 +187,6 @@ with check (bucket_id = 'securechat-media' and split_part(name, '/', 1) ~* '^[0-
 drop policy if exists "SecureChat members can delete encrypted media" on storage.objects;
 create policy "SecureChat members can delete encrypted media" on storage.objects for delete to authenticated
 using (bucket_id = 'securechat-media' and split_part(name, '/', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' and private.is_conversation_member(split_part(name, '/', 1)::uuid));
+
+-- Migration-safe addition for existing installations.
+alter table public.encrypted_messages add column if not exists media_path text;
