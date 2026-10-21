@@ -27,6 +27,7 @@ create table if not exists public.encrypted_messages (
   ciphertext text not null,
   nonce text not null,
   key_version integer not null default 1,
+  read_by uuid[] not null default '{}'::uuid[],
   read_at timestamptz,
   delete_after_read boolean not null default false,
   media_path text,
