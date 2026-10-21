@@ -14,28 +14,51 @@ const _storage = FlutterSecureStorage();
 final _cipher = AesGcm.with256bits();
 final _client = Supabase.instance.client;
 bool _supabaseReady = false;
+bool _supabaseInitializing = false;
 String? _supabaseInitError;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  const url = String.fromEnvironment('SUPABASE_URL');
-  const key = String.fromEnvironment('SUPABASE_ANON_KEY');
-  if (url.isNotEmpty && key.isNotEmpty) {
+  runApp(SecureChatApp(
+    supabaseUrl: const String.fromEnvironment('SUPABASE_URL'),
+    supabaseKey: const String.fromEnvironment('SUPABASE_ANON_KEY'),
+  ));
+}
+
+class SecureChatApp extends StatefulWidget {
+  const SecureChatApp({super.key, this.supabaseUrl = '', this.supabaseKey = ''});
+  final String supabaseUrl;
+  final String supabaseKey;
+
+  @override
+  State<SecureChatApp> createState() => _SecureChatAppState();
+}
+
+class _SecureChatAppState extends State<SecureChatApp> {
+  @override
+  void initState() {
+    super.initState();
+    _initializeBackend();
+  }
+
+  Future<void> _initializeBackend() async {
+    if (widget.supabaseUrl.isEmpty || widget.supabaseKey.isEmpty) return;
+    _supabaseInitializing = true;
+    _supabaseInitError = null;
     try {
-      await Supabase.initialize(url: url, publishableKey: key);
+      await Supabase.initialize(url: widget.supabaseUrl, publishableKey: widget.supabaseKey);
       _supabaseReady = true;
     } catch (e, stack) {
-      // A backend/configuration failure must not prevent the UI from starting.
+      // The first frame is already visible; backend failures must not block the UI.
       _supabaseInitError = e.toString();
       debugPrint('Supabase initialization failed: $_supabaseInitError');
       debugPrintStack(stackTrace: stack);
+    } finally {
+      _supabaseInitializing = false;
+      if (mounted) setState(() {});
     }
   }
-  runApp(const SecureChatApp());
-}
 
-class SecureChatApp extends StatelessWidget {
-  const SecureChatApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'SecureChat',
@@ -46,12 +69,17 @@ class SecureChatApp extends StatelessWidget {
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF9A7BFF), brightness: Brightness.dark),
       useMaterial3: true,
     ),
-    home: _supabaseReady ? const AuthGate() : const LaunchScreen(),
+    home: _supabaseReady ? const AuthGate() : LaunchScreen(
+      initializing: _supabaseInitializing,
+      initializationError: _supabaseInitError,
+    ),
   );
 }
 
 class LaunchScreen extends StatelessWidget {
-  const LaunchScreen({super.key});
+  const LaunchScreen({super.key, this.initializing = false, this.initializationError});
+  final bool initializing;
+  final String? initializationError;
 
   void _openAuth(BuildContext context, {required bool register}) {
     Navigator.of(context).push(MaterialPageRoute(
@@ -116,9 +144,15 @@ class LaunchScreen extends StatelessWidget {
                   child: const Text('Hesap oluştur'),
                 ),
                 const SizedBox(height: 22),
-                const Text('Hesapla giriş için sunucu bağlantısı gerekir; uygulamayı açmak ve bu ekranları görmek için bağlantı ayarı istenmez.',
+                Text(
+                  initializing
+                    ? 'Güvenli bağlantı başlatılıyor…'
+                    : initializationError != null
+                      ? 'Sunucu bağlantısı başlatılamadı. Giriş ekranları kullanılabilir; hesap işlemleri için bağlantı ayarı kontrol edilmeli.'
+                      : 'Hesap işlemleri için sunucu bağlantısı gerekir. Uygulama ekranları bağlantı olmadan da açılır.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.5)),
+                  style: const TextStyle(color: Colors.white38, fontSize: 12, height: 1.5),
+                ),
               ],
             ),
           ),
@@ -185,7 +219,11 @@ class _AuthScreenState extends State<AuthScreen> {
   Future<void> _submit() async {
     if (!_supabaseReady) {
       setState(() {
-        _error = 'Hesap işlemleri için Supabase bağlantısı henüz yapılandırılmamış. Şimdilik uygulamanın giriş ekranlarını görüntüleyebilirsin.';
+        _error = _supabaseInitError != null
+          ? 'Sunucu bağlantısı başlatılamadı. Lütfen uygulama yöneticisinin bağlantı ayarlarını kontrol etmesini iste.'
+          : _supabaseInitializing
+            ? 'Güvenli bağlantı başlatılıyor. Birkaç saniye sonra tekrar dene.'
+            : 'Hesap işlemleri için sunucu bağlantısı henüz yapılandırılmamış.';
       });
       return;
     }
@@ -418,8 +456,10 @@ class _ChatScreenState extends State<ChatScreen> {
   );
   Future<void> _prepareCall({required bool video}) async {
     if (_callBusy) return;
-    setState(() { _callBusy = true; _videoCall = video; _callStatus = 'Aranıyor…'; });
+    setState(() { _callBusy = true; _videoCall = video; _callStatus = null; });
     try {
+      // Initialize renderers before building RTCVideoView widgets; otherwise the first
+      // video-call frame can reference a renderer without a texture.
       if (!_renderersReady) { await _localRenderer.initialize(); await _remoteRenderer.initialize(); _renderersReady = true; }
       _localStream = await navigator.mediaDevices.getUserMedia({'audio':true,'video':video ? {'facingMode':'user'} : false});
       _localRenderer.srcObject = _localStream;
