@@ -30,18 +30,110 @@ class SecureChatApp extends StatelessWidget {
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF9A7BFF), brightness: Brightness.dark),
       useMaterial3: true,
     ),
-    home: Supabase.instance.isInitialized ? const AuthGate() : const SetupScreen(),
+    home: Supabase.instance.isInitialized ? const AuthGate() : const LaunchScreen(),
   );
 }
 
-class SetupScreen extends StatelessWidget {
-  const SetupScreen({super.key});
+class LaunchScreen extends StatelessWidget {
+  const LaunchScreen({super.key});
+
+  void _openAuth(BuildContext context, {required bool register}) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => AuthScreen(initialRegister: register),
+    ));
+  }
+
   @override
-  Widget build(BuildContext context) => const Scaffold(
-    body: Center(child: Padding(padding: EdgeInsets.all(28), child: Text(
-      'Kurulum tamamlanmadı. GitHub Actions içinde SUPABASE_URL ve SUPABASE_ANON_KEY tanımlanmalı.',
-      textAlign: TextAlign.center,
-    ))),
+  Widget build(BuildContext context) => Scaffold(
+    body: SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 28),
+                Container(
+                  width: 96, height: 96,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF211B35),
+                    borderRadius: BorderRadius.circular(30),
+                    border: Border.all(color: const Color(0xFF55418C)),
+                  ),
+                  child: const Icon(Icons.shield_moon_rounded, size: 54, color: Color(0xFFB9A5FF)),
+                ),
+                const SizedBox(height: 28),
+                const Text('SecureChat', textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800, letterSpacing: -0.8)),
+                const SizedBox(height: 10),
+                const Text('Özel konuşmaların için daha sakin bir alan.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 16, color: Colors.white70, height: 1.5)),
+                const SizedBox(height: 30),
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF14141F),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: const Color(0xFF2A2838)),
+                  ),
+                  child: const Column(children: [
+                    _FeatureRow(icon: Icons.lock_outline_rounded, title: 'Şifreli mesajlaşma', subtitle: 'Mesajlar gönderilmeden önce cihazda şifrelenir.'),
+                    SizedBox(height: 18),
+                    _FeatureRow(icon: Icons.visibility_off_outlined, title: 'Hayalet Mod', subtitle: 'Desteklenen sohbetlerde okunan mesajları temizleme akışı.'),
+                    SizedBox(height: 18),
+                    _FeatureRow(icon: Icons.devices_outlined, title: 'Hesabın, sohbetlerin', subtitle: 'Hesapla giriş yap ve kullanıcı adıyla sohbet başlat.'),
+                  ]),
+                ),
+                const SizedBox(height: 28),
+                FilledButton(
+                  onPressed: () => _openAuth(context, register: false),
+                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
+                  child: const Text('Giriş yap'),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton(
+                  onPressed: () => _openAuth(context, register: true),
+                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(54)),
+                  child: const Text('Hesap oluştur'),
+                ),
+                const SizedBox(height: 22),
+                const Text('Hesapla giriş için sunucu bağlantısı gerekir; uygulamayı açmak ve bu ekranları görmek için bağlantı ayarı istenmez.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.5)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _FeatureRow extends StatelessWidget {
+  const _FeatureRow({required this.icon, required this.title, required this.subtitle});
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Container(
+        width: 42, height: 42,
+        decoration: BoxDecoration(color: const Color(0xFF29223F), borderRadius: BorderRadius.circular(13)),
+        child: Icon(icon, color: const Color(0xFFB9A5FF), size: 22),
+      ),
+      const SizedBox(width: 13),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+        const SizedBox(height: 4),
+        Text(subtitle, style: const TextStyle(color: Colors.white54, height: 1.4, fontSize: 13)),
+      ])),
+    ],
   );
 }
 
@@ -55,7 +147,8 @@ class AuthGate extends StatelessWidget {
 }
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
+  const AuthScreen({super.key, this.initialRegister = false});
+  final bool initialRegister;
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
@@ -66,7 +159,20 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _register = false;
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _register = widget.initialRegister;
+  }
+
   Future<void> _submit() async {
+    if (!Supabase.instance.isInitialized) {
+      setState(() {
+        _error = 'Hesap işlemleri için Supabase bağlantısı henüz yapılandırılmamış. Şimdilik uygulamanın giriş ekranlarını görüntüleyebilirsin.';
+      });
+      return;
+    }
     setState(() { _busy = true; _error = null; });
     try {
       if (_register) {
