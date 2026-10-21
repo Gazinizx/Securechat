@@ -31,6 +31,7 @@ jobs:
           p.write_text(s)
           PY
       - run: flutter pub get
+      - run: flutter test
       - run: flutter analyze --no-fatal-infos
       - name: Build Android APK with SecureChat Supabase project
         env:
