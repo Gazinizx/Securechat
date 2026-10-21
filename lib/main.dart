@@ -540,7 +540,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final mediaBox = await _cipher.encrypt(bytes, secretKey: _key!);
       final extension = file.name.contains('.') ? file.name.split('.').last.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '') : (video ? 'mp4' : 'jpg');
       final mediaPath = '$_id/${_client.auth.currentUser!.id}/${DateTime.now().microsecondsSinceEpoch}.$extension.enc';
-      await _client.storage.from('securechat-media').uploadBinary(mediaPath, mediaBox.cipherText, fileOptions: const FileOptions(contentType:'application/octet-stream',upsert:false));
+      await _client.storage.from('securechat-media').uploadBinary(mediaPath, Uint8List.fromList(mediaBox.cipherText), fileOptions: const FileOptions(contentType:'application/octet-stream',upsert:false));
       final payload = jsonEncode({'kind':'media','media_type': video ? 'video' : 'image','name':file.name,'path':mediaPath,'nonce':base64Encode(mediaBox.nonce),'mac':base64Encode(mediaBox.mac.bytes)});
       final encrypted = await _encrypt(payload);
       final envelope = jsonDecode(encrypted) as Map<String,dynamic>;
