@@ -142,3 +142,32 @@ grant execute on function public.mark_conversation_read(uuid) to authenticated;
 grant execute on function public.cleanup_ghost_messages(uuid) to authenticated;
 
 -- E2EE currently relies on a shared passphrase, not audited identity/key exchange or forward secrecy.
+
+
+-- WebRTC call signaling. Media flows peer-to-peer; this table carries SDP/ICE setup data.
+create table if not exists public.call_signals (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  sender_id uuid not null references auth.users(id) on delete cascade,
+  receiver_id uuid not null references auth.users(id) on delete cascade,
+  signal_type text not null check (signal_type in ('offer','answer','ice','end','reject')),
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists call_signals_conversation_created_idx on public.call_signals(conversation_id, created_at);
+alter table public.call_signals enable row level security;
+drop policy if exists "Conversation members can read call signals" on public.call_signals;
+create policy "Conversation members can read call signals" on public.call_signals for select to authenticated
+using (private.is_conversation_member(conversation_id) and (sender_id = auth.uid() or receiver_id = auth.uid()));
+drop policy if exists "Members can send call signals to conversation partner" on public.call_signals;
+create policy "Members can send call signals to conversation partner" on public.call_signals for insert to authenticated
+with check (
+  sender_id = auth.uid()
+  and private.is_conversation_member(conversation_id)
+  and exists (select 1 from public.conversation_members m where m.conversation_id = call_signals.conversation_id and m.user_id = call_signals.receiver_id)
+  and receiver_id <> auth.uid()
+);
+drop policy if exists "Call participants can delete signals" on public.call_signals;
+create policy "Call participants can delete signals" on public.call_signals for delete to authenticated
+using (private.is_conversation_member(conversation_id) and (sender_id = auth.uid() or receiver_id = auth.uid()));
+grant select, insert, delete on public.call_signals to authenticated;
