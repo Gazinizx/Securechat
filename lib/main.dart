@@ -531,7 +531,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_mediaBusy || _sending) return;
     if (!_keyReady || _key == null) { await _setSecret(); if (!_keyReady || _key == null) return; }
     try {
-      final XFile? file = video ? await _picker.pickVideo(source: ImageSource.gallery) : await _picker.pickMedia();
+      final XFile? file = video ? await _picker.pickVideo(source: ImageSource.gallery) : await _picker.pickImage(source: ImageSource.gallery);
       if (file == null) return;
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) throw Exception('Dosya boş.');
