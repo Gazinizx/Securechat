@@ -597,6 +597,15 @@ class _ChatScreenState extends State<ChatScreen> {
     if (widget.conversation['ghost_mode'] == true) {
       try { await _client.rpc('cleanup_ghost_messages', params: {'p_conversation_id': _id}); } catch (_) {}
       try { await _client.from('call_signals').delete().eq('conversation_id',_id); } catch (_) {}
+      try {
+        final owners = await _client.storage.from('securechat-media').list(path:_id);
+        final paths = <String>[];
+        for (final owner in owners) {
+          final files = await _client.storage.from('securechat-media').list(path:'$_id/${owner.name}');
+          for (final file in files) { paths.add('$_id/${owner.name}/${file.name}'); }
+        }
+        if (paths.isNotEmpty) await _client.storage.from('securechat-media').remove(paths);
+      } catch (_) {}
     }
     if (mounted) Navigator.pop(context);
   }
