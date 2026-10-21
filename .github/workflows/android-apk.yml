@@ -19,8 +19,8 @@ jobs:
       - run: flutter analyze --no-fatal-infos
       - name: Build Android APK with SecureChat Supabase project
         env:
-          SUPABASE_URL: https://dlcwqphvprvrczljgqzi.supabase.co
-          SUPABASE_ANON_KEY: sb_publishable_fr5bM2QaaTgYAeZDiTEnyw_Q9Z_dfS-
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: flutter build apk --release --dart-define=SUPABASE_URL="$SUPABASE_URL" --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
       - uses: actions/upload-artifact@v4
         with:
