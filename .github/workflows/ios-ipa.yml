@@ -83,6 +83,51 @@ jobs:
           echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
+      - name: Configure manual App Store signing
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          p = Path("ios/Runner.xcodeproj/project.pbxproj")
+          s = p.read_text()
+          team = os.environ["IOS_TEAM_ID"]
+          profile = os.environ["PROFILE_UUID"]
+          # Apply explicit distribution signing to the Runner target's Release configuration only.
+          pattern = r'(?P<head>[A-F0-9]{24} /\* Release \*/ = \{.*?isa = XCBuildConfiguration;.*?buildSettings = \{)(?P<body>.*?)(?P<tail>\n\s*\};\n\s*name = Release;\n\s*\};)'
+          matches = list(re.finditer(pattern, s, re.S))
+          if not matches:
+              raise SystemExit("Could not find Xcode Release build configurations")
+          # Identify the Runner target's Release configuration by its existing bundle identifier.
+          selected = None
+          for m in matches:
+              body = m.group("body")
+              if "PRODUCT_BUNDLE_IDENTIFIER = com.gazinizx.securechat;" in body or "PRODUCT_BUNDLE_IDENTIFIER = com.example.securechat;" in body:
+                  selected = m
+                  break
+          if selected is None:
+              # Flutter's generated Runner target uses the product bundle identifier in the Release settings.
+              raise SystemExit("Could not identify Runner Release signing configuration")
+          body = selected.group("body")
+          body = re.sub(r'CODE_SIGN_STYLE = [^;]+;', 'CODE_SIGN_STYLE = Manual;', body)
+          body = re.sub(r'CODE_SIGN_IDENTITY = [^;]+;', 'CODE_SIGN_IDENTITY = "Apple Distribution";', body)
+          body = re.sub(r'DEVELOPMENT_TEAM = [^;]*;', f'DEVELOPMENT_TEAM = {team};', body)
+          body = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;', f'PROVISIONING_PROFILE_SPECIFIER = {profile};', body)
+          for key, value in [
+              ("CODE_SIGN_STYLE", "Manual"),
+              ("CODE_SIGN_IDENTITY", '"Apple Distribution"'),
+              ("DEVELOPMENT_TEAM", team),
+              ("PROVISIONING_PROFILE_SPECIFIER", profile),
+          ]:
+              if not re.search(rf'\\b{key}\\s*=', body):
+                  body += f'\\n\\t\\t\\t\\t{key} = {value};'
+          updated = s[:selected.start("body")] + body + s[selected.end("body"):]
+          p.write_text(updated)
+          print("Configured manual distribution signing for Runner Release.")
+          PY
+
       - name: Build Flutter dependencies and tests
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
