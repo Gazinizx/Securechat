@@ -53,6 +53,18 @@ alter table public.conversations enable row level security;
 alter table public.conversation_members enable row level security;
 alter table public.encrypted_messages enable row level security;
 
+-- SECURITY DEFINER avoids recursive RLS checks when determining conversation membership.
+create or replace function public.is_conversation_member(p_conversation_id uuid)
+returns boolean language sql stable security definer set search_path = public
+as $
+  select exists (
+    select 1 from public.conversation_members m
+    where m.conversation_id = p_conversation_id and m.user_id = auth.uid()
+  );
+$;
+revoke all on function public.is_conversation_member(uuid) from public;
+grant execute on function public.is_conversation_member(uuid) to authenticated;
+
 drop policy if exists "Authenticated users can read profiles" on public.profiles;
 create policy "Authenticated users can read profiles" on public.profiles for select to authenticated using (true);
 drop policy if exists "Users can create own profile" on public.profiles;
@@ -60,13 +72,14 @@ create policy "Users can create own profile" on public.profiles for insert to au
 drop policy if exists "Users can update own profile" on public.profiles;
 create policy "Users can update own profile" on public.profiles for update to authenticated using (auth.uid() = id) with check (auth.uid() = id);
 drop policy if exists "Members can view conversations" on public.conversations;
-create policy "Members can view conversations" on public.conversations for select to authenticated using (exists(select 1 from public.conversation_members m where m.conversation_id = id and m.user_id = auth.uid()));
+create policy "Members can view conversations" on public.conversations for select to authenticated using (public.is_conversation_member(id));
 drop policy if exists "Users can view own memberships" on public.conversation_members;
-create policy "Users can view own memberships" on public.conversation_members for select to authenticated using (user_id = auth.uid());
+drop policy if exists "Members can view conversation memberships" on public.conversation_members;
+create policy "Members can view conversation memberships" on public.conversation_members for select to authenticated using (public.is_conversation_member(conversation_id));
 drop policy if exists "Members can read ciphertext" on public.encrypted_messages;
-create policy "Members can read ciphertext" on public.encrypted_messages for select to authenticated using (exists(select 1 from public.conversation_members m where m.conversation_id = encrypted_messages.conversation_id and m.user_id = auth.uid()));
+create policy "Members can read ciphertext" on public.encrypted_messages for select to authenticated using (public.is_conversation_member(conversation_id));
 drop policy if exists "Members can insert ciphertext as self" on public.encrypted_messages;
-create policy "Members can insert ciphertext as self" on public.encrypted_messages for insert to authenticated with check (sender_id = auth.uid() and exists(select 1 from public.conversation_members m where m.conversation_id = encrypted_messages.conversation_id and m.user_id = auth.uid()));
+create policy "Members can insert ciphertext as self" on public.encrypted_messages for insert to authenticated with check (sender_id = auth.uid() and public.is_conversation_member(conversation_id));
 
 create or replace function public.create_conversation_with_username(p_username text, p_ghost_mode boolean default false)
 returns uuid language plpgsql security definer set search_path = public
