@@ -19,7 +19,7 @@ Future<void> main() async {
   const url = String.fromEnvironment('SUPABASE_URL');
   const key = String.fromEnvironment('SUPABASE_ANON_KEY');
   if (url.isNotEmpty && key.isNotEmpty) {
-    await Supabase.initialize(url: url, anonKey: key);
+    await Supabase.initialize(url: url, publishableKey: key);
   }
   runApp(const SecureChatApp());
 }
@@ -324,6 +324,7 @@ class _InboxScreenState extends State<InboxScreen> {
       final id = await _client.rpc('create_conversation_with_username', params: {'p_username': (result['username'] as String).toLowerCase(), 'p_ghost_mode': result['ghost']});
       if (!mounted) return;
       await _load();
+      if (!mounted) return;
       final chat = _chats.firstWhere((c) => c['id'] == id, orElse: () => {'id': id, 'ghost_mode': result['ghost'], 'conversation_members': []});
       await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: result['username'] as String)));
       _load();
