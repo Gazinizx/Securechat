@@ -96,6 +96,16 @@ begin
   select id into target_id from public.profiles where username = lower(trim(p_username));
   if target_id is null then raise exception 'Username not found'; end if;
   if target_id = auth.uid() then raise exception 'Cannot create a conversation with yourself'; end if;
+  -- Reuse an existing one-to-one conversation with the same mode instead of creating duplicates.
+  select c.id into new_id
+  from public.conversations c
+  join public.conversation_members mine on mine.conversation_id = c.id and mine.user_id = auth.uid()
+  join public.conversation_members theirs on theirs.conversation_id = c.id and theirs.user_id = target_id
+  where c.ghost_mode = coalesce(p_ghost_mode,false)
+    and (select count(*) from public.conversation_members cm where cm.conversation_id = c.id) = 2
+  order by c.created_at desc
+  limit 1;
+  if new_id is not null then return new_id; end if;
   insert into public.conversations(created_by, ghost_mode) values(auth.uid(), coalesce(p_ghost_mode,false)) returning id into new_id;
   insert into public.conversation_members(conversation_id,user_id) values(new_id,auth.uid()),(new_id,target_id);
   return new_id;
