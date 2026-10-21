@@ -171,3 +171,18 @@ drop policy if exists "Call participants can delete signals" on public.call_sign
 create policy "Call participants can delete signals" on public.call_signals for delete to authenticated
 using (private.is_conversation_member(conversation_id) and (sender_id = auth.uid() or receiver_id = auth.uid()));
 grant select, insert, delete on public.call_signals to authenticated;
+
+
+-- Private bucket for locally encrypted photo/video bytes. Object paths start with conversation UUID / uploader UUID.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('securechat-media', 'securechat-media', false, 41943040, array['application/octet-stream'])
+on conflict (id) do update set public = false, file_size_limit = 41943040, allowed_mime_types = array['application/octet-stream'];
+drop policy if exists "SecureChat members can read encrypted media" on storage.objects;
+create policy "SecureChat members can read encrypted media" on storage.objects for select to authenticated
+using (bucket_id = 'securechat-media' and split_part(name, '/', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' and private.is_conversation_member(split_part(name, '/', 1)::uuid));
+drop policy if exists "SecureChat members can upload encrypted media" on storage.objects;
+create policy "SecureChat members can upload encrypted media" on storage.objects for insert to authenticated
+with check (bucket_id = 'securechat-media' and split_part(name, '/', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' and private.is_conversation_member(split_part(name, '/', 1)::uuid) and split_part(name, '/', 2) = auth.uid()::text);
+drop policy if exists "SecureChat members can delete encrypted media" on storage.objects;
+create policy "SecureChat members can delete encrypted media" on storage.objects for delete to authenticated
+using (bucket_id = 'securechat-media' and split_part(name, '/', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' and private.is_conversation_member(split_part(name, '/', 1)::uuid));
