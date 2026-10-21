@@ -15,6 +15,17 @@ jobs:
           channel: stable
           cache: true
       - run: flutter create --platforms=android,ios .
+      - name: Configure iOS media-call permissions
+        run: |
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          p = Path("ios/Runner/Info.plist")
+          data = plistlib.loads(p.read_bytes())
+          data["NSCameraUsageDescription"] = "SecureChat uses the camera for video calls."
+          data["NSMicrophoneUsageDescription"] = "SecureChat uses the microphone for voice and video calls."
+          p.write_bytes(plistlib.dumps(data))
+          PY
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - name: Build unsigned iOS app (signing intentionally deferred)
