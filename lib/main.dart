@@ -42,16 +42,35 @@ class _SecureChatAppState extends State<SecureChatApp> {
   }
 
   Future<void> _initializeBackend() async {
-    if (widget.supabaseUrl.isEmpty || widget.supabaseKey.isEmpty) return;
     _supabaseInitializing = true;
     _supabaseInitError = null;
+    if (widget.supabaseUrl.trim().isEmpty || widget.supabaseKey.trim().isEmpty) {
+      final missing = <String>[
+        if (widget.supabaseUrl.trim().isEmpty) 'SUPABASE_URL',
+        if (widget.supabaseKey.trim().isEmpty) 'SUPABASE_ANON_KEY',
+      ];
+      _supabaseInitError = 'Derleme ayarı eksik: ${missing.join(', ')} uygulamaya aktarılmamış.';
+      debugPrint('SecureChat backend config error: $_supabaseInitError');
+      _supabaseInitializing = false;
+      if (mounted) setState(() {});
+      return;
+    }
+    final uri = Uri.tryParse(widget.supabaseUrl.trim());
+    if (uri == null || uri.scheme != 'https' || !uri.host.endsWith('.supabase.co')) {
+      _supabaseInitError = 'SUPABASE_URL geçersiz görünüyor. Supabase proje URL’si https://...supabase.co biçiminde olmalı.';
+      debugPrint('SecureChat backend config error: $_supabaseInitError');
+      _supabaseInitializing = false;
+      if (mounted) setState(() {});
+      return;
+    }
     try {
-      await Supabase.initialize(url: widget.supabaseUrl, publishableKey: widget.supabaseKey);
+      await Supabase.initialize(url: widget.supabaseUrl.trim(), publishableKey: widget.supabaseKey.trim());
       _supabaseReady = true;
+      debugPrint('SecureChat Supabase initialized for host: ${uri.host}');
     } catch (e, stack) {
-      // The first frame is already visible; backend failures must not block the UI.
-      _supabaseInitError = e.toString();
-      debugPrint('Supabase initialization failed: $_supabaseInitError');
+      // Do not print API keys. The SDK exception is useful for diagnosing URL/key/config failures.
+      _supabaseInitError = '${e.runtimeType}: ${e.toString()}';
+      debugPrint('Supabase initialization failed for ${uri.host}: $_supabaseInitError');
       debugPrintStack(stackTrace: stack);
     } finally {
       _supabaseInitializing = false;
@@ -220,7 +239,7 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!_supabaseReady) {
       setState(() {
         _error = _supabaseInitError != null
-          ? 'Sunucu bağlantısı başlatılamadı. Lütfen uygulama yöneticisinin bağlantı ayarlarını kontrol etmesini iste.'
+          ? 'Sunucu bağlantısı başlatılamadı. Ayrıntı: $_supabaseInitError'
           : _supabaseInitializing
             ? 'Güvenli bağlantı başlatılıyor. Birkaç saniye sonra tekrar dene.'
             : 'Hesap işlemleri için sunucu bağlantısı henüz yapılandırılmamış.';
