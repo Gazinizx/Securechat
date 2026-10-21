@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:io';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:video_player/video_player.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _storage = FlutterSecureStorage();
@@ -468,7 +471,18 @@ class _ChatScreenState extends State<ChatScreen> {
       if (media['media_type'] == 'image') {
         await showDialog<void>(context:context,builder:(ctx)=>Dialog(child:InteractiveViewer(child:Image.memory(Uint8List.fromList(clear),fit:BoxFit.contain))));
       } else {
-        await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:const Text('Şifreli video'),content:Text('Video içeriği cihazda çözüldü. Dosya: ${media['name'] ?? 'video'}'),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Kapat'))]));
+        final dir = await getTemporaryDirectory();
+        final safeName = (media['name'] as String? ?? 'securechat-video.mp4').replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+        final localFile = await File('${dir.path}/$safeName').writeAsBytes(clear, flush:true);
+        final controller = VideoPlayerController.file(localFile);
+        await controller.initialize();
+        if (!mounted) { await controller.dispose(); return; }
+        await showDialog<void>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setDialogState)=>Dialog(child:AspectRatio(aspectRatio:controller.value.aspectRatio,child:Stack(alignment:Alignment.center,children:[
+          VideoPlayer(controller),
+          IconButton.filled(onPressed:() async { if (controller.value.isPlaying) { await controller.pause(); } else { await controller.play(); } setDialogState((){}); },icon:Icon(controller.value.isPlaying ? Icons.pause : Icons.play_arrow)),
+        ])))));
+        await controller.dispose();
+        if (await localFile.exists()) await localFile.delete();
       }
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Medya açılamadı: $e'))); }
   }
