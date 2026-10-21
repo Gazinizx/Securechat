@@ -196,8 +196,8 @@ jobs:
               exit 1
             fi
           done
-          mkdir -p "$RUNNER_TEMP/private_keys"
-          printf '%s' "$APP_STORE_CONNECT_API_PRIVATE_KEY" > "$RUNNER_TEMP/private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          mkdir -p "$HOME/.private_keys"
+          printf '%s' "$APP_STORE_CONNECT_API_PRIVATE_KEY" > "$HOME/.private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
           xcrun altool --upload-app \
             --type ios \
             --file build/ios/ipa/*.ipa \
