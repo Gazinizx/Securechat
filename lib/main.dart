@@ -535,10 +535,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (file == null) return;
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) throw Exception('Dosya boş.');
-      if (bytes.length > 5 * 1024 * 1024) throw Exception('Şimdilik ek dosya sınırı 5 MB.');
+      if (bytes.length > 40 * 1024 * 1024) throw Exception('Dosya en fazla 40 MB olabilir.');
       setState(() => _mediaBusy = true);
       final mediaBox = await _cipher.encrypt(bytes, secretKey: _key!);
-      final payload = jsonEncode({'kind':'media','media_type': video ? 'video' : 'image','name':file.name,'bytes':base64Encode(mediaBox.cipherText),'nonce':base64Encode(mediaBox.nonce),'mac':base64Encode(mediaBox.mac.bytes)});
+      final extension = file.name.contains('.') ? file.name.split('.').last.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '') : (video ? 'mp4' : 'jpg');
+      final mediaPath = '$_id/${_client.auth.currentUser!.id}/${DateTime.now().microsecondsSinceEpoch}.$extension.enc';
+      await _client.storage.from('securechat-media').uploadBinary(mediaPath, mediaBox.cipherText, fileOptions: const FileOptions(contentType:'application/octet-stream',upsert:false));
+      final payload = jsonEncode({'kind':'media','media_type': video ? 'video' : 'image','name':file.name,'path':mediaPath,'nonce':base64Encode(mediaBox.nonce),'mac':base64Encode(mediaBox.mac.bytes)});
       final encrypted = await _encrypt(payload);
       final envelope = jsonDecode(encrypted) as Map<String,dynamic>;
       await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'delete_after_read':widget.conversation['ghost_mode'] == true});
@@ -549,7 +552,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _showMedia(Map<String,dynamic> media) async {
     try {
-      final clear = await _cipher.decrypt(SecretBox(base64Decode(media['bytes'] as String), nonce:base64Decode(media['nonce'] as String), mac:Mac(base64Decode(media['mac'] as String))), secretKey:_key!);
+      final encryptedBytes = await _client.storage.from('securechat-media').download(media['path'] as String);
+      final clear = await _cipher.decrypt(SecretBox(encryptedBytes, nonce:base64Decode(media['nonce'] as String), mac:Mac(base64Decode(media['mac'] as String))), secretKey:_key!);
       if (!mounted) return;
       if (media['media_type'] == 'image') {
         await showDialog<void>(context:context,builder:(ctx)=>Dialog(child:InteractiveViewer(child:Image.memory(Uint8List.fromList(clear),fit:BoxFit.contain))));
