@@ -13,7 +13,10 @@ void main() {
 
   testWidgets('registration form opens from launch screen', (WidgetTester tester) async {
     await tester.pumpWidget(const SecureChatApp());
-    await tester.tap(find.text('Hesap oluştur'));
+    final registerButton = find.text('Hesap oluştur');
+    await tester.ensureVisible(registerButton);
+    await tester.pumpAndSettle();
+    await tester.tap(registerButton);
     await tester.pumpAndSettle();
 
     expect(find.text('Yeni hesap oluştur'), findsOneWidget);
