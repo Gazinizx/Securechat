@@ -463,7 +463,7 @@ class _ChatScreenState extends State<ChatScreen> {
         for (final candidate in _pendingIce) { await _peer!.addCandidate(candidate); } _pendingIce.clear();
       } else if (type == 'ice') {
         final candidate = RTCIceCandidate(payload['candidate'] as String?,payload['sdpMid'] as String?,payload['sdpMLineIndex'] as int?);
-        if (_peer?.getRemoteDescription() != null) { await _peer!.addCandidate(candidate); } else { _pendingIce.add(candidate); }
+        if (_peer != null && await _peer!.getRemoteDescription() != null) { await _peer!.addCandidate(candidate); } else { _pendingIce.add(candidate); }
       } else if (type == 'end' || type == 'reject') { await _endCall(sendSignal:false); }
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Arama sinyali işlenemedi: $e'))); }
   }
