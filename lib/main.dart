@@ -232,12 +232,25 @@ class InboxScreen extends StatefulWidget {
   State<InboxScreen> createState() => _InboxScreenState();
 }
 class _InboxScreenState extends State<InboxScreen> {
+  String _clockLabel(dynamic value) {
+    try {
+      final date = DateTime.parse(value.toString()).toLocal();
+      return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    } catch (_) { return ''; }
+  }
   List<Map<String, dynamic>> _chats = [];
   bool _busy = true;
   String? _error;
   final _search = TextEditingController();
+  RealtimeChannel? _inboxChannel;
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() {
+    super.initState();
+    _load();
+    _inboxChannel = _client.channel('securechat-inbox-${_client.auth.currentUser!.id}')
+      ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'encrypted_messages', callback: (_) => _load())
+      ..subscribe();
+  }
   Future<void> _load() async {
     try {
       final uid = _client.auth.currentUser!.id;
@@ -260,8 +273,25 @@ class _InboxScreenState extends State<InboxScreen> {
       final chats = List<Map<String,dynamic>>.from(rows).map((row) {
         final chat = Map<String,dynamic>.from(row);
         chat['conversation_members'] = membersByChat[chat['id']] ?? [];
+        chat['last_message_at'] = null;
+        chat['last_message_sender'] = null;
         return chat;
       }).toList();
+      // Load a bounded recent window so the inbox can show a useful latest-message preview.
+      final recentMessages = List<Map<String,dynamic>>.from(await _client
+        .from('encrypted_messages').select('conversation_id,sender_id,created_at')
+        .inFilter('conversation_id', ids).order('created_at', ascending: false).limit(500));
+      final latestByChat = <String, Map<String,dynamic>>{};
+      for (final message in recentMessages) {
+        latestByChat.putIfAbsent(message['conversation_id'] as String, () => message);
+      }
+      for (final chat in chats) {
+        final latest = latestByChat[chat['id'] as String];
+        if (latest != null) {
+          chat['last_message_at'] = latest['created_at'];
+          chat['last_message_sender'] = latest['sender_id'];
+        }
+      }
       if (mounted) setState(() { _chats = chats; _busy = false; _error = null; });
     } catch (e) { if (mounted) setState(() { _busy = false; _error = e.toString(); }); }
   }
@@ -294,7 +324,11 @@ class _InboxScreenState extends State<InboxScreen> {
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sohbet açılamadı: $e'))); }
   }
   @override
-  void dispose() { _search.dispose(); super.dispose(); }
+  void dispose() {
+    _search.dispose();
+    if (_inboxChannel != null) _client.removeChannel(_inboxChannel!);
+    super.dispose();
+  }
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('SecureChat', style: TextStyle(fontWeight: FontWeight.w700)), actions: [
@@ -309,8 +343,14 @@ class _InboxScreenState extends State<InboxScreen> {
         const Padding(padding: EdgeInsets.symmetric(vertical: 42), child: Column(children: [Icon(Icons.forum_outlined, size: 48, color: Color(0xFFB9A5FF)), SizedBox(height: 12), Text('Henüz sohbet yok', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)), SizedBox(height: 6), Text('Yeni sohbet başlatmak için kalem simgesine dokun.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54))])),
       for (final chat in _chats.where((c) => _title(c).toLowerCase().contains(_search.text.toLowerCase())))
         ListTile(leading: CircleAvatar(backgroundColor: const Color(0xFF28223D), child: Text(_title(chat).isNotEmpty ? _title(chat)[0].toUpperCase() : '?')),
-          title: Text(_title(chat)), subtitle: Text(chat['ghost_mode'] == true ? 'Hayalet Mod açık' : 'Şifreli mesajlaşma'),
-          trailing: const Icon(Icons.chevron_right), onTap: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: _title(chat)))); _load(); }),
+          title: Text(_title(chat)),
+          subtitle: Text(chat['last_message_at'] == null
+            ? (chat['ghost_mode'] == true ? 'Hayalet Mod açık · Henüz mesaj yok' : 'Henüz mesaj yok')
+            : '${chat['last_message_sender'] == _client.auth.currentUser!.id ? 'Sen: ' : ''}Şifreli mesaj${chat['ghost_mode'] == true ? ' · Hayalet Mod' : ''}'),
+          trailing: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            if (chat['last_message_at'] != null) Text(_clockLabel(chat['last_message_at']), style: const TextStyle(fontSize: 11, color: Colors.white54)),
+            const Icon(Icons.chevron_right),
+          ]), onTap: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: _title(chat)))); _load(); }),
     ])),
     floatingActionButton: FloatingActionButton(onPressed: _newChat, child: const Icon(Icons.edit_outlined)),
   );
@@ -324,6 +364,12 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 class _ChatScreenState extends State<ChatScreen> {
+  String _clockLabel(dynamic value) {
+    try {
+      final date = DateTime.parse(value.toString()).toLocal();
+      return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    } catch (_) { return ''; }
+  }
   final _input = TextEditingController();
   final _secret = TextEditingController();
   final _scroll = ScrollController();
@@ -439,7 +485,14 @@ class _ChatScreenState extends State<ChatScreen> {
               constraints: const BoxConstraints(maxWidth: 310), margin: const EdgeInsets.symmetric(vertical: 4),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(color: mine ? const Color(0xFF55418C) : const Color(0xFF20202D), borderRadius: BorderRadius.circular(16)),
-              child: Text(text.toString()),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
+                Align(alignment: Alignment.centerLeft, child: Text(text.toString())),
+                const SizedBox(height: 4),
+                Text(
+                  '${_clockLabel(m['created_at'])}${mine && m['read_at'] != null ? ' · Okundu' : ''}',
+                  style: const TextStyle(fontSize: 10, color: Colors.white60),
+                ),
+              ]),
             ));
           },
         )),
