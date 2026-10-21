@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _storage = FlutterSecureStorage();
@@ -382,6 +383,16 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scroll = ScrollController();
   final List<Map<String,dynamic>> _messages = [];
   RealtimeChannel? _channel;
+  RealtimeChannel? _callChannel;
+  RTCPeerConnection? _peer;
+  MediaStream? _localStream;
+  final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
+  final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
+  final List<RTCIceCandidate> _pendingIce = [];
+  bool _callBusy = false;
+  bool _videoCall = false;
+  String? _callStatus;
+  bool _renderersReady = false;
   SecretKey? _key;
   bool _keyReady = false;
   bool _loading = true;
@@ -394,11 +405,83 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<SecretKey> _derive(String phrase) => Hkdf(hmac: Hmac.sha256(), outputLength: 32).deriveKey(
     secretKey: SecretKey(utf8.encode(phrase)), nonce: utf8.encode(_id), info: utf8.encode('SecureChat-v1'),
   );
+  Future<void> _prepareCall({required bool video}) async {
+    if (_callBusy) return;
+    setState(() { _callBusy = true; _videoCall = video; _callStatus = 'Aranıyor…'; });
+    try {
+      if (!_renderersReady) { await _localRenderer.initialize(); await _remoteRenderer.initialize(); _renderersReady = true; }
+      _localStream = await navigator.mediaDevices.getUserMedia({'audio':true,'video':video ? {'facingMode':'user'} : false});
+      _localRenderer.srcObject = _localStream;
+      _peer = await createPeerConnection({'iceServers':[{'urls':'stun:stun.l.google.com:19302'}]});
+      for (final track in _localStream!.getTracks()) { await _peer!.addTrack(track, _localStream!); }
+      _peer!.onTrack = (event) { if (event.streams.isNotEmpty) { _remoteRenderer.srcObject = event.streams.first; if (mounted) setState(() => _callStatus = 'Bağlandı'); } };
+      _peer!.onIceCandidate = (candidate) { if (candidate.candidate != null) { _sendSignal('ice', {'candidate':candidate.candidate,'sdpMid':candidate.sdpMid,'sdpMLineIndex':candidate.sdpMLineIndex}); } };
+      if (mounted) setState(() { _callBusy = false; _callStatus = 'Bağlantı kuruluyor…'; });
+    } catch (e) { await _endCall(sendSignal:false); if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Arama başlatılamadı: $e'))); }
+  }
+
+  String? _otherMemberId() {
+    final members = (widget.conversation['conversation_members'] as List? ?? []);
+    for (final member in members) { if (member['user_id'] != _client.auth.currentUser!.id) return member['user_id'] as String?; }
+    return null;
+  }
+
+  Future<void> _sendSignal(String type, Map<String,dynamic> data) async {
+    final receiver = _otherMemberId();
+    if (receiver == null) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Sohbet üyesi bilgisi eksik; sohbet listesinden yeniden aç.'))); return; }
+    await _client.from('call_signals').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'receiver_id':receiver,'signal_type':type,'payload':data});
+  }
+
+  Future<void> _startCall({required bool video}) async {
+    if (_otherMemberId() == null) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Sohbet üyesi bulunamadı. Sohbeti listeden yeniden aç.'))); return; }
+    await _prepareCall(video:video);
+    if (_peer == null) return;
+    try {
+      final offer = await _peer!.createOffer({'offerToReceiveAudio':true,'offerToReceiveVideo':video});
+      await _peer!.setLocalDescription(offer);
+      await _sendSignal('offer', {'sdp':offer.sdp,'type':offer.type,'video':video});
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Arama teklifi gönderilemedi: $e'))); await _endCall(sendSignal:false); }
+  }
+
+  Future<void> _handleCallSignal(Map<String,dynamic> row) async {
+    if (row['receiver_id'] != _client.auth.currentUser!.id || row['sender_id'] == _client.auth.currentUser!.id) return;
+    final type = row['signal_type'] as String? ?? '';
+    final payload = Map<String,dynamic>.from(row['payload'] as Map? ?? {});
+    try {
+      if (type == 'offer') {
+        if (_peer != null) return;
+        final accept = await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(title:Text(payload['video'] == true ? 'Görüntülü arama' : 'Sesli arama'),content:const Text('Sohbet arkadaşın seni arıyor.'),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Reddet')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Yanıtla'))]));
+        if (accept != true || !mounted) { await _sendSignal('reject',{}); return; }
+        await _prepareCall(video:payload['video'] == true);
+        if (_peer == null) return;
+        await _peer!.setRemoteDescription(RTCSessionDescription(payload['sdp'] as String?,payload['type'] as String? ?? 'offer'));
+        for (final candidate in _pendingIce) { await _peer!.addCandidate(candidate); } _pendingIce.clear();
+        final answer = await _peer!.createAnswer(); await _peer!.setLocalDescription(answer);
+        await _sendSignal('answer', {'sdp':answer.sdp,'type':answer.type});
+      } else if (type == 'answer' && _peer != null) {
+        await _peer!.setRemoteDescription(RTCSessionDescription(payload['sdp'] as String?,payload['type'] as String? ?? 'answer'));
+        for (final candidate in _pendingIce) { await _peer!.addCandidate(candidate); } _pendingIce.clear();
+      } else if (type == 'ice') {
+        final candidate = RTCIceCandidate(payload['candidate'] as String?,payload['sdpMid'] as String?,payload['sdpMLineIndex'] as int?);
+        if (_peer?.getRemoteDescription() != null) { await _peer!.addCandidate(candidate); } else { _pendingIce.add(candidate); }
+      } else if (type == 'end' || type == 'reject') { await _endCall(sendSignal:false); }
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Arama sinyali işlenemedi: $e'))); }
+  }
+
+  Future<void> _endCall({bool sendSignal = true}) async {
+    if (sendSignal && _peer != null) { try { await _sendSignal('end',{}); } catch (_) {} }
+    try { await _peer?.close(); } catch (_) {} _peer = null;
+    try { for (final track in _localStream?.getTracks() ?? <MediaStreamTrack>[]) { track.stop(); } await _localStream?.dispose(); } catch (_) {}
+    _localStream = null; _localRenderer.srcObject = null; _remoteRenderer.srcObject = null; _pendingIce.clear();
+    if (mounted) setState(() { _callBusy = false; _callStatus = null; });
+  }
+
   Future<void> _init() async {
     try {
       final saved = await _storage.read(key: _keyName);
       if (saved != null && saved.isNotEmpty) { _key = await _derive(saved); _keyReady = true; }
       await _loadMessages();
+      _callChannel = _client.channel('call-signals-$_id')..onPostgresChanges(event:PostgresChangeEvent.insert,schema:'public',table:'call_signals',filter:PostgresChangeFilter(type:PostgresChangeFilterType.eq,column:'conversation_id',value:_id),callback:(payload) => _handleCallSignal(Map<String,dynamic>.from(payload.newRecord)))..subscribe();
       _channel = _client.channel('chat-$_id')
         ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'encrypted_messages', filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'conversation_id', value: _id), callback: (_) => _loadMessages())
         ..subscribe();
@@ -506,8 +589,10 @@ class _ChatScreenState extends State<ChatScreen> {
     finally { if (mounted) setState(() => _sending = false); }
   }
   Future<void> _leave() async {
+    await _endCall();
     if (widget.conversation['ghost_mode'] == true) {
       try { await _client.rpc('cleanup_ghost_messages', params: {'p_conversation_id': _id}); } catch (_) {}
+      try { await _client.from('call_signals').delete().eq('conversation_id',_id); } catch (_) {}
     }
     if (mounted) Navigator.pop(context);
   }
@@ -515,14 +600,19 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _input.dispose(); _secret.dispose(); _scroll.dispose();
     if (_channel != null) _client.removeChannel(_channel!);
+    if (_callChannel != null) _client.removeChannel(_callChannel!);
+    if (_renderersReady) { _localRenderer.dispose(); _remoteRenderer.dispose(); }
     super.dispose();
   }
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: Text(widget.title), leading: IconButton(onPressed: _leave, icon: const Icon(Icons.arrow_back)), actions: [
+        IconButton(tooltip:'Sesli ara',onPressed:_callBusy || _callStatus != null ? null : () => _startCall(video:false),icon:const Icon(Icons.call_outlined)),
+        IconButton(tooltip:'Görüntülü ara',onPressed:_callBusy || _callStatus != null ? null : () => _startCall(video:true),icon:const Icon(Icons.videocam_outlined)),
         IconButton(tooltip: 'Gizli ifadeyi ayarla', onPressed: _setSecret, icon: const Icon(Icons.key_outlined)),
       ]),
       body: Column(children: [
+        if (_callStatus != null) Container(padding:const EdgeInsets.all(8),color:const Color(0xFF181824),child:Column(children:[Text(_callStatus!),if (_videoCall) SizedBox(height:180,child:Row(children:[Expanded(child:RTCVideoView(_remoteRenderer,objectFit:RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)),SizedBox(width:90,child:RTCVideoView(_localRenderer,mirror:true))])),TextButton.icon(onPressed:()=>_endCall(),icon:const Icon(Icons.call_end,color:Colors.redAccent),label:const Text('Aramayı bitir'))])),
         if (!_keyReady) MaterialBanner(content: const Text('Mesajları okuyup göndermek için iki tarafta da aynı gizli ifadeyi ayarla.'), actions: [TextButton(onPressed: _setSecret, child: const Text('İfade ayarla'))]),
         if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
         Expanded(child: _loading ? const Center(child: CircularProgressIndicator()) : ListView.builder(
