@@ -15,6 +15,21 @@ jobs:
           channel: stable
           cache: true
       - run: flutter create --platforms=android,ios .
+      - name: Configure Android media-call permissions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
+          marker = '    <application'
+          permissions = '    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n'
+          if 'android.permission.CAMERA' not in s:
+              s = s.replace(marker, permissions + marker, 1)
+          p.write_text(s)
+          p = Path("android/app/build.gradle.kts")
+          s = p.read_text().replace("minSdk = flutter.minSdkVersion", "minSdk = 23")
+          p.write_text(s)
+          PY
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - name: Build Android APK with SecureChat Supabase project
