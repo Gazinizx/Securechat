@@ -121,8 +121,8 @@ jobs:
               ("DEVELOPMENT_TEAM", team),
               ("PROVISIONING_PROFILE_SPECIFIER", profile),
           ]:
-              if not re.search(rf'\\b{key}\\s*=', body):
-                  body += f'\\n\\t\\t\\t\\t{key} = {value};'
+              if not re.search(rf'\b{key}\s*=', body):
+                  body += f'\n\t\t\t\t{key} = {value};'
           updated = s[:selected.start("body")] + body + s[selected.end("body"):]
           p.write_text(updated)
           print("Configured manual distribution signing for Runner Release.")
