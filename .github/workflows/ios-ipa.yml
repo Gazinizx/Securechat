@@ -27,6 +27,7 @@ jobs:
           p.write_bytes(plistlib.dumps(data))
           PY
       - run: flutter pub get
+      - run: flutter test
       - run: flutter analyze --no-fatal-infos
       - name: Build unsigned iOS app (signing intentionally deferred)
         env:
