@@ -59,12 +59,12 @@ alter table public.encrypted_messages enable row level security;
 -- SECURITY DEFINER avoids recursive RLS checks when determining conversation membership.
 create or replace function private.is_conversation_member(p_conversation_id uuid)
 returns boolean language sql stable security definer set search_path = public
-as $
+as $$
   select exists (
     select 1 from public.conversation_members m
     where m.conversation_id = p_conversation_id and m.user_id = auth.uid()
   );
-$;
+$$;
 revoke all on function private.is_conversation_member(uuid) from public, anon;
 grant execute on function private.is_conversation_member(uuid) to authenticated;
 
