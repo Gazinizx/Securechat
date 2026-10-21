@@ -460,7 +460,16 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       // Initialize renderers before building RTCVideoView widgets; otherwise the first
       // video-call frame can reference a renderer without a texture.
-      if (!_renderersReady) { await _localRenderer.initialize(); await _remoteRenderer.initialize(); _renderersReady = true; }
+      if (!_renderersReady) {
+        await _localRenderer.initialize();
+        try {
+          await _remoteRenderer.initialize();
+          _renderersReady = true;
+        } catch (_) {
+          await _localRenderer.dispose();
+          rethrow;
+        }
+      }
       _localStream = await navigator.mediaDevices.getUserMedia({'audio':true,'video':video ? {'facingMode':'user'} : false});
       _localRenderer.srcObject = _localStream;
       _peer = await createPeerConnection({'iceServers':[{'urls':'stun:stun.l.google.com:19302'}]});
@@ -523,7 +532,12 @@ class _ChatScreenState extends State<ChatScreen> {
     if (sendSignal && _peer != null) { try { await _sendSignal('end',{}); } catch (_) {} }
     try { await _peer?.close(); } catch (_) {} _peer = null;
     try { for (final track in _localStream?.getTracks() ?? <MediaStreamTrack>[]) { track.stop(); } await _localStream?.dispose(); } catch (_) {}
-    _localStream = null; _localRenderer.srcObject = null; _remoteRenderer.srcObject = null; _pendingIce.clear();
+    _localStream = null;
+    if (_renderersReady) {
+      _localRenderer.srcObject = null;
+      _remoteRenderer.srcObject = null;
+    }
+    _pendingIce.clear();
     if (mounted) setState(() { _callBusy = false; _callStatus = null; });
   }
 
