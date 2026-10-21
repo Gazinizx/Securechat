@@ -545,7 +545,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final payload = jsonEncode({'kind':'media','media_type': video ? 'video' : 'image','name':file.name,'path':mediaPath,'nonce':base64Encode(mediaBox.nonce),'mac':base64Encode(mediaBox.mac.bytes)});
       final encrypted = await _encrypt(payload);
       final envelope = jsonDecode(encrypted) as Map<String,dynamic>;
-      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'delete_after_read':widget.conversation['ghost_mode'] == true});
+      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'delete_after_read':widget.conversation['ghost_mode'] == true,'media_path':mediaPath});
       await _loadMessages();
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Medya gönderilemedi: $e'))); }
     finally { if (mounted) setState(() => _mediaBusy = false); }
@@ -596,17 +596,13 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _leave() async {
     await _endCall();
     if (widget.conversation['ghost_mode'] == true) {
-      try { await _client.rpc('cleanup_ghost_messages', params: {'p_conversation_id': _id}); } catch (_) {}
-      try { await _client.from('call_signals').delete().eq('conversation_id',_id); } catch (_) {}
       try {
-        final owners = await _client.storage.from('securechat-media').list(path:_id);
-        final paths = <String>[];
-        for (final owner in owners) {
-          final files = await _client.storage.from('securechat-media').list(path:'$_id/${owner.name}');
-          for (final file in files) { paths.add('$_id/${owner.name}/${file.name}'); }
-        }
+        final rows = await _client.from('encrypted_messages').select('media_path,read_at').eq('conversation_id',_id).eq('delete_after_read',true);
+        final paths = rows.where((row) => row['read_at'] != null && row['media_path'] != null).map((row) => row['media_path'] as String).toList();
         if (paths.isNotEmpty) await _client.storage.from('securechat-media').remove(paths);
       } catch (_) {}
+      try { await _client.rpc('cleanup_ghost_messages', params: {'p_conversation_id': _id}); } catch (_) {}
+      try { await _client.from('call_signals').delete().eq('conversation_id',_id); } catch (_) {}
     }
     if (mounted) Navigator.pop(context);
   }
