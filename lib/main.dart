@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _storage = FlutterSecureStorage();
@@ -371,6 +373,8 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (_) { return ''; }
   }
   final _input = TextEditingController();
+  final _picker = ImagePicker();
+  bool _mediaBusy = false;
   final _secret = TextEditingController();
   final _scroll = ScrollController();
   final List<Map<String,dynamic>> _messages = [];
@@ -437,6 +441,38 @@ class _ChatScreenState extends State<ChatScreen> {
       await _client.rpc('mark_conversation_read', params: {'p_conversation_id': _id});
     } catch (e) { if (mounted) setState(() => _error = e.toString()); }
   }
+  Future<void> _pickAndSendMedia({required bool video}) async {
+    if (_mediaBusy || _sending) return;
+    if (!_keyReady || _key == null) { await _setSecret(); if (!_keyReady || _key == null) return; }
+    try {
+      final XFile? file = video ? await _picker.pickVideo(source: ImageSource.gallery) : await _picker.pickMedia();
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) throw Exception('Dosya boş.');
+      if (bytes.length > 5 * 1024 * 1024) throw Exception('Şimdilik ek dosya sınırı 5 MB.');
+      setState(() => _mediaBusy = true);
+      final mediaBox = await _cipher.encrypt(bytes, secretKey: _key!);
+      final payload = jsonEncode({'kind':'media','media_type': video ? 'video' : 'image','name':file.name,'bytes':base64Encode(mediaBox.cipherText),'nonce':base64Encode(mediaBox.nonce),'mac':base64Encode(mediaBox.mac.bytes)});
+      final encrypted = await _encrypt(payload);
+      final envelope = jsonDecode(encrypted) as Map<String,dynamic>;
+      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'delete_after_read':widget.conversation['ghost_mode'] == true});
+      await _loadMessages();
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Medya gönderilemedi: $e'))); }
+    finally { if (mounted) setState(() => _mediaBusy = false); }
+  }
+
+  Future<void> _showMedia(Map<String,dynamic> media) async {
+    try {
+      final clear = await _cipher.decrypt(SecretBox(base64Decode(media['bytes'] as String), nonce:base64Decode(media['nonce'] as String), mac:Mac(base64Decode(media['mac'] as String))), secretKey:_key!);
+      if (!mounted) return;
+      if (media['media_type'] == 'image') {
+        await showDialog<void>(context:context,builder:(ctx)=>Dialog(child:InteractiveViewer(child:Image.memory(Uint8List.fromList(clear),fit:BoxFit.contain))));
+      } else {
+        await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:const Text('Şifreli video'),content:Text('Video içeriği cihazda çözüldü. Dosya: ${media['name'] ?? 'video'}'),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Kapat'))]));
+      }
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Medya açılamadı: $e'))); }
+  }
+
   Future<void> _send() async {
     if (!_keyReady || _key == null) { await _setSecret(); if (!_keyReady) return; }
     final text = _input.text.trim();
@@ -481,25 +517,26 @@ class _ChatScreenState extends State<ChatScreen> {
             final m = _messages[i];
             final mine = m['sender_id'] == _client.auth.currentUser!.id;
             final text = _keyReady ? (m['display_text'] ?? 'Şifreli mesaj') : 'Şifreli mesaj';
+            Map<String,dynamic>? media;
+            if (_keyReady && text is String) { try { final p = jsonDecode(text); if (p is Map<String,dynamic> && p['kind'] == 'media') media = p; } catch (_) {} }
             return Align(alignment: mine ? Alignment.centerRight : Alignment.centerLeft, child: Container(
               constraints: const BoxConstraints(maxWidth: 310), margin: const EdgeInsets.symmetric(vertical: 4),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(color: mine ? const Color(0xFF55418C) : const Color(0xFF20202D), borderRadius: BorderRadius.circular(16)),
               child: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
-                Align(alignment: Alignment.centerLeft, child: Text(text.toString())),
+                if (media != null) TextButton.icon(onPressed: () => _showMedia(media!), icon: Icon(media['media_type'] == 'video' ? Icons.play_circle_outline : Icons.image_outlined), label: Text('${media['media_type'] == 'video' ? 'Video' : 'Fotoğraf'}: ${media['name'] ?? 'Medya'}')) else Align(alignment: Alignment.centerLeft, child: Text(text.toString())),
                 const SizedBox(height: 4),
-                Text(
-                  '${_clockLabel(m['created_at'])}${mine && m['read_at'] != null ? ' · Okundu' : ''}',
-                  style: const TextStyle(fontSize: 10, color: Colors.white60),
-                ),
+                Text('${_clockLabel(m['created_at'])}${mine && m['read_at'] != null ? ' · Okundu' : ''}', style: const TextStyle(fontSize: 10, color: Colors.white60)),
               ]),
             ));
           },
         )),
-        SafeArea(top: false, child: Padding(padding: const EdgeInsets.fromLTRB(12, 8, 12, 12), child: Row(children: [
+        SafeArea(top: false, child: Padding(padding: const EdgeInsets.fromLTRB(6, 8, 6, 12), child: Row(children: [
+          IconButton(onPressed: _mediaBusy || _sending ? null : () => _pickAndSendMedia(video:false), tooltip:'Fotoğraf', icon:const Icon(Icons.image_outlined)),
+          IconButton(onPressed: _mediaBusy || _sending ? null : () => _pickAndSendMedia(video:true), tooltip:'Video', icon:const Icon(Icons.video_library_outlined)),
           Expanded(child: TextField(controller: _input, minLines: 1, maxLines: 5, textInputAction: TextInputAction.newline, decoration: InputDecoration(hintText: 'Şifreli mesaj yaz...', filled: true, fillColor: const Color(0xFF151520), border: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none)))),
-          const SizedBox(width: 8),
-          IconButton.filled(onPressed: _sending ? null : _send, icon: _sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send)),
+          const SizedBox(width: 4),
+          IconButton.filled(onPressed: _sending || _mediaBusy ? null : _send, icon: _sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send)),
         ]))),
       ]),
     );
