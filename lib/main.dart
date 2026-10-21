@@ -13,13 +13,23 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 const _storage = FlutterSecureStorage();
 final _cipher = AesGcm.with256bits();
 final _client = Supabase.instance.client;
+bool _supabaseReady = false;
+String? _supabaseInitError;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   const url = String.fromEnvironment('SUPABASE_URL');
   const key = String.fromEnvironment('SUPABASE_ANON_KEY');
   if (url.isNotEmpty && key.isNotEmpty) {
-    await Supabase.initialize(url: url, publishableKey: key);
+    try {
+      await Supabase.initialize(url: url, publishableKey: key);
+      _supabaseReady = true;
+    } catch (e, stack) {
+      // A backend/configuration failure must not prevent the UI from starting.
+      _supabaseInitError = e.toString();
+      debugPrint('Supabase initialization failed: $_supabaseInitError');
+      debugPrintStack(stackTrace: stack);
+    }
   }
   runApp(const SecureChatApp());
 }
@@ -36,7 +46,7 @@ class SecureChatApp extends StatelessWidget {
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF9A7BFF), brightness: Brightness.dark),
       useMaterial3: true,
     ),
-    home: Supabase.instance.isInitialized ? const AuthGate() : const LaunchScreen(),
+    home: _supabaseReady ? const AuthGate() : const LaunchScreen(),
   );
 }
 
@@ -173,7 +183,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _submit() async {
-    if (!Supabase.instance.isInitialized) {
+    if (!_supabaseReady) {
       setState(() {
         _error = 'Hesap işlemleri için Supabase bağlantısı henüz yapılandırılmamış. Şimdilik uygulamanın giriş ekranlarını görüntüleyebilirsin.';
       });
