@@ -11,7 +11,7 @@ create table if not exists public.profiles (
 create table if not exists public.conversations (
   id uuid primary key default gen_random_uuid(),
   created_by uuid not null references auth.users(id) on delete cascade,
-  ghost_mode boolean not null default false,
+  message_expiry_seconds integer not null default 0 check (message_expiry_seconds in (0, 7200, 21600, 43200, 86400, 604800)),
   created_at timestamptz not null default now()
 );
 create table if not exists public.conversation_members (
@@ -29,7 +29,7 @@ create table if not exists public.encrypted_messages (
   key_version integer not null default 1,
   read_by uuid[] not null default '{}'::uuid[],
   read_at timestamptz,
-  delete_after_read boolean not null default false,
+  expires_at timestamptz,
   media_path text,
   created_at timestamptz not null default now()
 );
@@ -89,7 +89,7 @@ drop policy if exists "Conversation members can send messages as themselves" on 
 drop policy if exists "Members can insert ciphertext as self" on public.encrypted_messages;
 create policy "Members can insert ciphertext as self" on public.encrypted_messages for insert to authenticated with check (sender_id = auth.uid() and private.is_conversation_member(conversation_id));
 
-create or replace function public.create_conversation_with_username(p_username text, p_ghost_mode boolean default false)
+create or replace function public.create_conversation_with_username(p_username text)
 returns uuid language plpgsql security definer set search_path = public
 as $$
 declare target_id uuid; new_id uuid;
@@ -103,12 +103,11 @@ begin
   from public.conversations c
   join public.conversation_members mine on mine.conversation_id = c.id and mine.user_id = auth.uid()
   join public.conversation_members theirs on theirs.conversation_id = c.id and theirs.user_id = target_id
-  where c.ghost_mode = coalesce(p_ghost_mode,false)
-    and (select count(*) from public.conversation_members cm where cm.conversation_id = c.id) = 2
+  where (select count(*) from public.conversation_members cm where cm.conversation_id = c.id) = 2
   order by c.created_at desc
   limit 1;
   if new_id is not null then return new_id; end if;
-  insert into public.conversations(created_by, ghost_mode) values(auth.uid(), coalesce(p_ghost_mode,false)) returning id into new_id;
+  insert into public.conversations(created_by, message_expiry_seconds) values(auth.uid(), 0) returning id into new_id;
   insert into public.conversation_members(conversation_id,user_id) values(new_id,auth.uid()),(new_id,target_id);
   return new_id;
 end;
@@ -124,24 +123,10 @@ begin
 end;
 $$;
 
-create or replace function public.cleanup_ghost_messages(p_conversation_id uuid)
-returns integer language plpgsql security definer set search_path = public
-as $$
-declare deleted_count integer;
-begin
-  if not exists(select 1 from public.conversation_members where conversation_id=p_conversation_id and user_id=auth.uid()) then raise exception 'Not a conversation member'; end if;
-  if not exists(select 1 from public.conversations where id=p_conversation_id and ghost_mode=true) then return 0; end if;
-  delete from public.encrypted_messages where conversation_id=p_conversation_id and delete_after_read=true and read_at is not null;
-  get diagnostics deleted_count = row_count;
-  return deleted_count;
-end;
-$$;
-revoke all on function public.create_conversation_with_username(text,boolean) from public;
+revoke all on function public.create_conversation_with_username(text) from public;
 revoke all on function public.mark_conversation_read(uuid) from public;
-revoke all on function public.cleanup_ghost_messages(uuid) from public;
-grant execute on function public.create_conversation_with_username(text,boolean) to authenticated;
+grant execute on function public.create_conversation_with_username(text) to authenticated;
 grant execute on function public.mark_conversation_read(uuid) to authenticated;
-grant execute on function public.cleanup_ghost_messages(uuid) to authenticated;
 
 -- E2EE currently relies on a shared passphrase, not audited identity/key exchange or forward secrecy.
 
@@ -191,3 +176,49 @@ using (bucket_id = 'securechat-media' and split_part(name, '/', 1) ~* '^[0-9a-f]
 
 -- Migration-safe addition for existing installations.
 alter table public.encrypted_messages add column if not exists media_path text;
+
+-- Timed messages: the server owns the expiry timestamp and deletes expired ciphertext.
+alter table public.encrypted_messages add column if not exists expires_at timestamptz;
+alter table public.conversations add column if not exists message_expiry_seconds integer not null default 0;
+create index if not exists encrypted_messages_expires_at_idx on public.encrypted_messages(expires_at) where expires_at is not null;
+drop policy if exists "Conversation members can update message expiry" on public.conversations;
+create policy "Conversation members can update message expiry" on public.conversations for update to authenticated
+using (private.is_conversation_member(id)) with check (private.is_conversation_member(id));
+
+create or replace function public.set_message_expiry()
+returns trigger language plpgsql security invoker set search_path = public
+as $$
+declare expiry_seconds integer;
+begin
+  select c.message_expiry_seconds into expiry_seconds from public.conversations c where c.id = new.conversation_id;
+  if coalesce(expiry_seconds, 0) > 0 then
+    new.expires_at := now() + make_interval(secs => expiry_seconds);
+  else
+    new.expires_at := null;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists set_encrypted_message_expiry on public.encrypted_messages;
+create trigger set_encrypted_message_expiry before insert on public.encrypted_messages for each row execute function public.set_message_expiry();
+
+create or replace function public.delete_expired_messages()
+returns integer language plpgsql security definer set search_path = public
+as $$
+declare deleted_count integer;
+begin
+  delete from public.encrypted_messages where expires_at is not null and expires_at <= now();
+  get diagnostics deleted_count = row_count;
+  return deleted_count;
+end;
+$$;
+revoke all on function public.delete_expired_messages() from public, anon, authenticated;
+create extension if not exists pg_cron;
+do $$
+begin
+  if exists (select 1 from cron.job where jobname = 'securechat-delete-expired-messages') then
+    perform cron.unschedule('securechat-delete-expired-messages');
+  end if;
+  perform cron.schedule('securechat-delete-expired-messages', '* * * * *', 'select public.delete_expired_messages();');
+end;
+$$;
