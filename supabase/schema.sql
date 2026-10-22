@@ -238,3 +238,8 @@ begin
   perform cron.schedule('securechat-delete-expired-messages', '* * * * *', 'select public.delete_expired_messages();');
 end;
 $$;
+
+-- Remove legacy Ghost Mode state from existing databases.
+drop function if exists public.cleanup_ghost_messages(uuid);
+alter table public.conversations drop column if exists ghost_mode;
+alter table public.encrypted_messages drop column if exists delete_after_read;
