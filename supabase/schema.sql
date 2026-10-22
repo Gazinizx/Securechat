@@ -8,6 +8,11 @@ create table if not exists public.profiles (
   username text unique not null check (char_length(username) between 3 and 32),
   created_at timestamptz not null default now()
 );
+create table if not exists public.user_encryption_keys (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  public_key text not null,
+  updated_at timestamptz not null default now()
+);
 create table if not exists public.conversations (
   id uuid primary key default gen_random_uuid(),
   created_by uuid not null references auth.users(id) on delete cascade,
@@ -51,6 +56,15 @@ $$;
 drop trigger if exists on_securechat_auth_user_created on auth.users;
 create trigger on_securechat_auth_user_created after insert on auth.users
 for each row execute procedure public.handle_new_securechat_user();
+
+alter table public.user_encryption_keys enable row level security;
+drop policy if exists "Authenticated users can read public encryption keys" on public.user_encryption_keys;
+create policy "Authenticated users can read public encryption keys" on public.user_encryption_keys for select to authenticated using (true);
+drop policy if exists "Users can publish own encryption key" on public.user_encryption_keys;
+create policy "Users can publish own encryption key" on public.user_encryption_keys for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists "Users can update own encryption key" on public.user_encryption_keys;
+create policy "Users can update own encryption key" on public.user_encryption_keys for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+grant select, insert, update on public.user_encryption_keys to authenticated;
 
 alter table public.profiles enable row level security;
 alter table public.conversations enable row level security;
@@ -184,6 +198,8 @@ create index if not exists encrypted_messages_expires_at_idx on public.encrypted
 drop policy if exists "Conversation members can update message expiry" on public.conversations;
 create policy "Conversation members can update message expiry" on public.conversations for update to authenticated
 using (private.is_conversation_member(id)) with check (private.is_conversation_member(id));
+revoke update on public.conversations from authenticated;
+grant update (message_expiry_seconds) on public.conversations to authenticated;
 
 create or replace function public.set_message_expiry()
 returns trigger language plpgsql security invoker set search_path = public
