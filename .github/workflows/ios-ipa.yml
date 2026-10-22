@@ -146,6 +146,22 @@ jobs:
           print("Set iOS build number to workflow run number.")
           PY
 
+      - name: Validate Supabase project endpoint
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          expected = "dlcwqphvprvrczljgqzi.supabase.co"
+          value = os.environ["SUPABASE_URL"].strip()
+          parsed = urlparse(value)
+          if parsed.scheme != "https" or parsed.hostname != expected or parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+              raise SystemExit("SUPABASE_URL secret does not match the verified SecureChat Supabase project endpoint.")
+          print("Supabase endpoint verified:", parsed.hostname)
+          PY
+
       - name: Build Flutter dependencies and tests
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
