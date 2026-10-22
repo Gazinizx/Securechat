@@ -484,6 +484,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _mediaBusy = false;
   final _scroll = ScrollController();
   final List<Map<String,dynamic>> _messages = [];
+  final Map<String, Future<Uint8List?>> _mediaPreviewCache = {};
   RealtimeChannel? _channel;
   RealtimeChannel? _callChannel;
   RTCPeerConnection? _peer;
@@ -751,6 +752,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _error = null;
           });
         }
+        await _client.rpc('mark_conversation_delivered',
+            params: {'p_conversation_id': _id});
         await _client.rpc('mark_conversation_read',
             params: {'p_conversation_id': _id});
       } while (_reloadMessagesQueued && mounted);
@@ -781,6 +784,21 @@ class _ChatScreenState extends State<ChatScreen> {
       await _loadMessages();
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Medya gönderilemedi: $e'))); }
     finally { if (mounted) setState(() => _mediaBusy = false); }
+  }
+
+  Future<Uint8List?> _loadMediaPreview(Map<String, dynamic> media) async {
+    try {
+      final encryptedBytes = await _client.storage.from('securechat-media').download(media['path'] as String);
+      final clear = await _cipher.decrypt(
+        SecretBox(encryptedBytes,
+          nonce: base64Decode(media['nonce'] as String),
+          mac: Mac(base64Decode(media['mac'] as String))),
+        secretKey: _key!,
+      );
+      return Uint8List.fromList(clear);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _showMedia(Map<String,dynamic> media) async {
@@ -872,9 +890,56 @@ class _ChatScreenState extends State<ChatScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(color: mine ? const Color(0xFF55418C) : const Color(0xFF20202D), borderRadius: BorderRadius.circular(16)),
               child: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
-                if (media != null) TextButton.icon(onPressed: () => _showMedia(media!), icon: Icon(media['media_type'] == 'video' ? Icons.play_circle_outline : Icons.image_outlined), label: Text('${media['media_type'] == 'video' ? 'Video' : 'Fotoğraf'}: ${media['name'] ?? 'Medya'}')) else Align(alignment: Alignment.centerLeft, child: Text(text.toString())),
+                if (media != null) ...[
+                  InkWell(
+                    onTap: () => _showMedia(media!),
+                    borderRadius: BorderRadius.circular(12),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: SizedBox(
+                        width: 230,
+                        child: media['media_type'] == 'image'
+                          ? FutureBuilder<Uint8List?>(
+                              future: _mediaPreviewCache.putIfAbsent(
+                                media['path'] as String,
+                                () => _loadMediaPreview(media!),
+                              ),
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState != ConnectionState.done) {
+                                  return const SizedBox(height: 150, child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
+                                }
+                                if (snapshot.data == null) {
+                                  return const SizedBox(height: 110, child: Center(child: Icon(Icons.broken_image_outlined, size: 32)));
+                                }
+                                return Image.memory(snapshot.data!, width: 230, height: 210, fit: BoxFit.cover);
+                              },
+                            )
+                          : Container(
+                              height: 130,
+                              color: Colors.black26,
+                              child: const Center(child: Icon(Icons.play_circle_fill, size: 54)),
+                            ),
+                      ),
+                    ),
+                  ),
+                  if (media['media_type'] == 'video')
+                    const Align(alignment: Alignment.centerLeft, child: Text('Video', style: TextStyle(fontSize: 12))),
+                ] else Align(alignment: Alignment.centerLeft, child: Text(text.toString())),
                 const SizedBox(height: 4),
-                Text('${_clockLabel(m['created_at'])}${mine && m['read_at'] != null ? ' · Okundu' : ''}', style: const TextStyle(fontSize: 10, color: Colors.white60)),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_clockLabel(m['created_at']), style: const TextStyle(fontSize: 10, color: Colors.white60)),
+                    if (mine) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        m['read_at'] != null ? Icons.done_all : (m['delivered_at'] != null ? Icons.done_all : Icons.done),
+                        size: 15,
+                        color: m['read_at'] != null ? const Color(0xFF53BDEB) : Colors.white60,
+                      ),
+                    ],
+                  ],
+                ),
               ]),
             ));
           },
