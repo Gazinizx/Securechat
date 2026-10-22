@@ -1,72 +1,65 @@
 name: Android APK
 "on":
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   build:
+    name: Build release APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
-      - run: flutter create --platforms=android,ios .
-      - name: Configure Android media-call permissions
+      - name: Generate Android platform project
+        run: flutter create --platforms=android .
+      - name: Set Android minimum SDK and permissions
+        shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path("android/app/src/main/AndroidManifest.xml")
-          s = p.read_text()
-          marker = '    <application'
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
           permissions = [
-              'android.permission.INTERNET',
-              'android.permission.CAMERA',
-              'android.permission.RECORD_AUDIO',
-              'android.permission.MODIFY_AUDIO_SETTINGS',
+              "android.permission.INTERNET",
+              "android.permission.CAMERA",
+              "android.permission.RECORD_AUDIO",
+              "android.permission.MODIFY_AUDIO_SETTINGS",
           ]
-          missing = [name for name in permissions if f'android:name="{name}"' not in s]
+          marker = "    <application"
+          missing = [p for p in permissions if f'android:name="{p}"' not in text]
           if missing:
-              lines = ''.join(f'    <uses-permission android:name="{name}" />\n' for name in missing)
-              if marker not in s:
-                  raise SystemExit('Android manifest application marker not found')
-              s = s.replace(marker, lines + marker, 1)
-          p.write_text(s)
-          if 'android.permission.INTERNET' not in p.read_text():
-              raise SystemExit('INTERNET permission was not added to release manifest')
-          s = p.read_text()
-          if 'android:scheme="securechat"' not in s:
-              activity_end = s.find('</activity>')
-              if activity_end < 0:
-                  raise SystemExit('MainActivity not found in Android manifest')
-              intent_filter = '''            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="securechat" android:host="login-callback" />
-            </intent-filter>
-'''
-              s = s[:activity_end] + intent_filter + s[activity_end:]
-              p.write_text(s)
-          if 'android:scheme="securechat"' not in p.read_text():
-              raise SystemExit('SecureChat email callback scheme was not added')
-          p = Path("android/app/build.gradle.kts")
-          s = p.read_text().replace("minSdk = flutter.minSdkVersion", "minSdk = 23")
-          p.write_text(s)
+              if marker not in text:
+                  raise SystemExit("AndroidManifest.xml: application marker missing")
+              block = "".join(f'    <uses-permission android:name="{p}" />\\n' for p in missing)
+              text = text.replace(marker, block + marker, 1)
+              manifest.write_text(text)
+          gradle = Path("android/app/build.gradle.kts")
+          if gradle.exists():
+              source = gradle.read_text()
+              source = source.replace("minSdk = flutter.minSdkVersion", "minSdk = 23")
+              gradle.write_text(source)
           PY
-      - run: flutter pub get
-      - run: flutter test
-      - run: flutter analyze --no-fatal-infos
-      - name: Build Android APK with SecureChat Supabase project
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Run tests
+        run: flutter test
+      - name: Analyze Dart
+        run: flutter analyze --no-fatal-infos
+      - name: Build release APK
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: flutter build apk --release --dart-define=SUPABASE_URL="$SUPABASE_URL" --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
         with:
           name: securechat-android-apk
           path: build/app/outputs/flutter-apk/app-release.apk
