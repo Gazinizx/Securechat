@@ -77,6 +77,12 @@ jobs:
           flutter build ipa --release --no-codesign \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
             --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+          # Flutter intentionally skips IPA packaging when codesigning is disabled.
+          # Package the archived app as an unsigned IPA for testing.
+          mkdir -p build/ios/ipa/Payload
+          cp -R build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app build/ios/ipa/Payload/
+          cd build/ios/ipa
+          /usr/bin/zip -qry Securechat-unsigned.ipa Payload
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
