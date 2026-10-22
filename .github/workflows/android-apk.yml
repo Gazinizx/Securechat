@@ -35,6 +35,23 @@ jobs:
           p.write_text(s)
           if 'android.permission.INTERNET' not in p.read_text():
               raise SystemExit('INTERNET permission was not added to release manifest')
+          # Register the app's email-verification callback deep link.
+          s = p.read_text()
+          if 'android:scheme="securechat"' not in s:
+              activity_end = s.find('</activity>')
+              if activity_end < 0:
+                  raise SystemExit('MainActivity not found in Android manifest')
+              intent_filter = '''            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="securechat" android:host="login-callback" />
+            </intent-filter>
+'''
+              s = s[:activity_end] + intent_filter + s[activity_end:]
+              p.write_text(s)
+          if 'android:scheme="securechat"' not in p.read_text():
+              raise SystemExit('SecureChat email callback scheme was not added')
           p = Path("android/app/build.gradle.kts")
           s = p.read_text().replace("minSdk = flutter.minSdkVersion", "minSdk = 23")
           p.write_text(s)
