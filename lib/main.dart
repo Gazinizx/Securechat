@@ -304,12 +304,38 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void initState() {
     super.initState();
+    _publishIdentityKey();
     _load();
     _checkAdmin();
     _inboxChannel = _client.channel('securechat-inbox-${_client.auth.currentUser!.id}')
       ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'encrypted_messages', callback: (_) => _load())
       ..subscribe();
   }
+  Future<void> _publishIdentityKey() async {
+    try {
+      final uid = _client.auth.currentUser?.id;
+      if (uid == null) return;
+      var privateValue = await _storage.read(key: 'securechat_identity_private_v1');
+      var publicValue = await _storage.read(key: 'securechat_identity_public_v1');
+      if (privateValue == null || publicValue == null) {
+        final pair = await X25519().newKeyPair();
+        final privateBytes = await pair.extractPrivateKeyBytes();
+        final publicKey = await pair.extractPublicKey();
+        privateValue = base64Encode(privateBytes);
+        publicValue = base64Encode(publicKey.bytes);
+        await _storage.write(key: 'securechat_identity_private_v1', value: privateValue);
+        await _storage.write(key: 'securechat_identity_public_v1', value: publicValue);
+      }
+      await _client.from('user_encryption_keys').upsert({
+        'user_id': uid,
+        'public_key': publicValue,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, onConflict: 'user_id');
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Şifreleme anahtarı hazırlanamadı: $e');
+    }
+  }
+
   Future<void> _load() async {
     try {
       final uid = _client.auth.currentUser!.id;
