@@ -20,10 +20,21 @@ jobs:
           p = Path("android/app/src/main/AndroidManifest.xml")
           s = p.read_text()
           marker = '    <application'
-          permissions = '    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n'
-          if 'android.permission.CAMERA' not in s:
-              s = s.replace(marker, permissions + marker, 1)
+          permissions = [
+              'android.permission.INTERNET',
+              'android.permission.CAMERA',
+              'android.permission.RECORD_AUDIO',
+              'android.permission.MODIFY_AUDIO_SETTINGS',
+          ]
+          missing = [name for name in permissions if f'android:name="{name}"' not in s]
+          if missing:
+              lines = ''.join(f'    <uses-permission android:name="{name}" />\\n' for name in missing)
+              if marker not in s:
+                  raise SystemExit('Android manifest application marker not found')
+              s = s.replace(marker, lines + marker, 1)
           p.write_text(s)
+          if 'android.permission.INTERNET' not in p.read_text():
+              raise SystemExit('INTERNET permission was not added to release manifest')
           p = Path("android/app/build.gradle.kts")
           s = p.read_text().replace("minSdk = flutter.minSdkVersion", "minSdk = 23")
           p.write_text(s)
