@@ -1,7 +1,8 @@
 name: Android APK
-on:
+"on":
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 permissions:
   contents: read
@@ -37,7 +38,6 @@ jobs:
           p.write_text(s)
           if 'android.permission.INTERNET' not in p.read_text():
               raise SystemExit('INTERNET permission was not added to release manifest')
-          # Register the app's email-verification callback deep link.
           s = p.read_text()
           if 'android:scheme="securechat"' not in s:
               activity_end = s.find('</activity>')
