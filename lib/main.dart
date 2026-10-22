@@ -474,11 +474,23 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _keyReady = false;
   bool _loading = true;
   bool _sending = false;
+  bool _ghostMode = false;
   String? _error;
   String get _id => widget.conversation['id'].toString();
   String get _keyName => 'securechat_key_$_id';
   @override
-  void initState() { super.initState(); _init(); }
+  void initState() { super.initState(); _ghostMode = widget.conversation['ghost_mode'] == true; _init(); }
+  Future<void> _toggleGhostMode() async {
+    final next = !_ghostMode;
+    try {
+      await _client.from('conversations').update({'ghost_mode': next}).eq('id', _id);
+      if (!mounted) return;
+      setState(() { _ghostMode = next; widget.conversation['ghost_mode'] = next; });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(next ? 'Hayalet Mod açıldı' : 'Hayalet Mod kapatıldı')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hayalet Mod değiştirilemedi: $e')));
+    }
+  }
   Future<SecretKey> _derive(String phrase) => Hkdf(hmac: Hmac.sha256(), outputLength: 32).deriveKey(
     secretKey: SecretKey(utf8.encode(phrase)), nonce: utf8.encode(_id), info: utf8.encode('SecureChat-v1'),
   );
@@ -637,7 +649,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final payload = jsonEncode({'kind':'media','media_type': video ? 'video' : 'image','name':file.name,'path':mediaPath,'nonce':base64Encode(mediaBox.nonce),'mac':base64Encode(mediaBox.mac.bytes)});
       final encrypted = await _encrypt(payload);
       final envelope = jsonDecode(encrypted) as Map<String,dynamic>;
-      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'delete_after_read':widget.conversation['ghost_mode'] == true,'media_path':mediaPath});
+      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'delete_after_read':_ghostMode,'media_path':mediaPath});
       await _loadMessages();
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Medya gönderilemedi: $e'))); }
     finally { if (mounted) setState(() => _mediaBusy = false); }
@@ -678,7 +690,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await _client.from('encrypted_messages').insert({
         'conversation_id': _id, 'sender_id': _client.auth.currentUser!.id,
         'ciphertext': encrypted, 'nonce': obj['nonce'], 'key_version': 1,
-        'delete_after_read': widget.conversation['ghost_mode'] == true,
+        'delete_after_read': _ghostMode,
       });
       _input.clear();
       await _loadMessages();
@@ -687,7 +699,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
   Future<void> _leave() async {
     await _endCall();
-    if (widget.conversation['ghost_mode'] == true) {
+    if (_ghostMode) {
       try {
         final rows = await _client.from('encrypted_messages').select('media_path,read_at').eq('conversation_id',_id).eq('delete_after_read',true);
         final paths = rows.where((row) => row['read_at'] != null && row['media_path'] != null).map((row) => row['media_path'] as String).toList();
@@ -709,6 +721,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: Text(widget.title), leading: IconButton(onPressed: _leave, icon: const Icon(Icons.arrow_back)), actions: [
+        IconButton(tooltip: _ghostMode ? 'Hayalet Mod açık — kapat' : 'Hayalet Mod kapalı — aç', onPressed: _toggleGhostMode, icon: Icon(_ghostMode ? Icons.visibility_off : Icons.visibility_outlined, color: _ghostMode ? const Color(0xFFB9A5FF) : null)),
         IconButton(tooltip:'Sesli ara',onPressed:_callBusy || _callStatus != null ? null : () => _startCall(video:false),icon:const Icon(Icons.call_outlined)),
         IconButton(tooltip:'Görüntülü ara',onPressed:_callBusy || _callStatus != null ? null : () => _startCall(video:true),icon:const Icon(Icons.videocam_outlined)),
         IconButton(tooltip: 'Gizli ifadeyi ayarla', onPressed: _setSecret, icon: const Icon(Icons.key_outlined)),
