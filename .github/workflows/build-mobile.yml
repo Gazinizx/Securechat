@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: securechat-mobile-build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   android-apk:
     name: Build Android APK
@@ -24,13 +28,19 @@ jobs:
       - name: Generate missing platform scaffolding
         shell: bash
         run: |
-          if [ ! -d android ] || [ ! -d ios ]; then
+          if [ ! -f android/gradlew ] || [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
             flutter create --platforms=android,ios --org com.securechat.app .
           fi
       - name: Install dependencies
         run: flutter pub get
       - name: Build release APK
-        run: flutter build apk --release
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -54,13 +64,19 @@ jobs:
       - name: Generate missing platform scaffolding
         shell: bash
         run: |
-          if [ ! -d android ] || [ ! -d ios ]; then
+          if [ ! -f android/gradlew ] || [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
             flutter create --platforms=android,ios --org com.securechat.app .
           fi
       - name: Install dependencies
         run: flutter pub get
       - name: Build unsigned IPA
-        run: flutter build ipa --release --no-codesign
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          flutter build ipa --release --no-codesign \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
