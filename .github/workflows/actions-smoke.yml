@@ -1,0 +1,17 @@
+name: Actions startup diagnostic
+"on":
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm GitHub Actions runner starts
+        run: |
+          echo "runner_started=true"
+          echo "ref=$GITHUB_REF"
+          echo "sha=$GITHUB_SHA"
