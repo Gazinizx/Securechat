@@ -1,6 +1,8 @@
 name: SecureChat Android APK + iOS IPA
 # Rebuild after the Supabase publishable key secret was updated.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
