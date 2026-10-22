@@ -495,8 +495,6 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hayalet Mod değiştirilemedi: $e')));
     }
   }
-  Future<SecretKey> _derive(String phrase) => Hkdf(hmac: Hmac.sha256(), outputLength: 32).deriveKey(
-    secretKey: SecretKey(utf8.encode(phrase)), nonce: utf8.encode(_id), info: utf8.encode('SecureChat-v1'),
   );
   Future<void> _prepareCall({required bool video}) async {
     if (_callBusy) return;
@@ -765,11 +763,9 @@ class _ChatScreenState extends State<ChatScreen> {
         IconButton(tooltip: _ghostMode ? 'Hayalet Mod açık — kapat' : 'Hayalet Mod kapalı — aç', onPressed: _toggleGhostMode, icon: Icon(_ghostMode ? Icons.visibility_off : Icons.visibility_outlined, color: _ghostMode ? const Color(0xFFB9A5FF) : null)),
         IconButton(tooltip:'Sesli ara',onPressed:_callBusy || _callStatus != null ? null : () => _startCall(video:false),icon:const Icon(Icons.call_outlined)),
         IconButton(tooltip:'Görüntülü ara',onPressed:_callBusy || _callStatus != null ? null : () => _startCall(video:true),icon:const Icon(Icons.videocam_outlined)),
-        IconButton(tooltip: 'Gizli ifadeyi ayarla', onPressed: _setSecret, icon: const Icon(Icons.key_outlined)),
       ]),
       body: Column(children: [
         if (_callStatus != null) Container(padding:const EdgeInsets.all(8),color:const Color(0xFF181824),child:Column(children:[Text(_callStatus!),if (_videoCall) SizedBox(height:180,child:Row(children:[Expanded(child:RTCVideoView(_remoteRenderer,objectFit:RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)),SizedBox(width:90,child:RTCVideoView(_localRenderer,mirror:true))])),TextButton.icon(onPressed:()=>_endCall(),icon:const Icon(Icons.call_end,color:Colors.redAccent),label:const Text('Aramayı bitir'))])),
-        if (!_keyReady) MaterialBanner(content: const Text('Mesajları okuyup göndermek için iki tarafta da aynı gizli ifadeyi ayarla.'), actions: [TextButton(onPressed: _setSecret, child: const Text('İfade ayarla'))]),
         if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
         Expanded(child: _loading ? const Center(child: CircularProgressIndicator()) : ListView.builder(
           controller: _scroll, padding: const EdgeInsets.all(12), itemCount: _messages.length,
