@@ -257,6 +257,7 @@ class _AuthScreenState extends State<AuthScreen> {
           email: _email.text.trim(),
           password: _password.text,
           data: {'username': username},
+          emailRedirectTo: 'securechat://login-callback/',
         );
         if (mounted && result.session == null) setState(() => _error = 'E-posta doğrulaması açıksa gelen kutunu kontrol et; profil otomatik oluşturulur.');
       } else {
