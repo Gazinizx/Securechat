@@ -1,0 +1,70 @@
+name: Securechat Android APK and iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  android-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate missing platform scaffolding
+        shell: bash
+        run: |
+          if [ ! -d android ] || [ ! -d ios ]; then
+            flutter create --platforms=android,ios --org com.securechat.app .
+          fi
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Build release APK
+        run: flutter build apk --release
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Securechat-Android-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  ios-ipa:
+    name: Build unsigned iOS IPA
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate missing platform scaffolding
+        shell: bash
+        run: |
+          if [ ! -d android ] || [ ! -d ios ]; then
+            flutter create --platforms=android,ios --org com.securechat.app .
+          fi
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Build unsigned IPA
+        run: flutter build ipa --release --no-codesign
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Securechat-iOS-IPA-Unsigned
+          path: build/ios/ipa/*.ipa
+          if-no-files-found: error
+          retention-days: 14
