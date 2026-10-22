@@ -84,8 +84,8 @@ class _SecureChatAppState extends State<SecureChatApp> {
     debugShowCheckedModeBanner: false,
     theme: ThemeData(
       brightness: Brightness.dark,
-      scaffoldBackgroundColor: const Color(0xFF09090F),
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF9A7BFF), brightness: Brightness.dark),
+      scaffoldBackgroundColor: const Color(0xFF030712),
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF315CFF), brightness: Brightness.dark),
       useMaterial3: true,
     ),
     home: _supabaseReady ? const AuthGate() : LaunchScreen(
@@ -111,64 +111,77 @@ class LaunchScreen extends StatelessWidget {
     body: SafeArea(
       child: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 18),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 440),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 28),
-                Container(
-                  width: 96, height: 96,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF211B35),
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(color: const Color(0xFF55418C)),
+                const SizedBox(height: 22),
+                Center(
+                  child: Container(
+                    width: 106, height: 106,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: const RadialGradient(colors: [Color(0xFF142F75), Color(0xFF060D20)]),
+                      border: Border.all(color: const Color(0xFF315CFF), width: 1.4),
+                      boxShadow: const [BoxShadow(color: Color(0x44315CFF), blurRadius: 34, spreadRadius: 2)],
+                    ),
+                    child: const Icon(Icons.mark_chat_unread_rounded, size: 58, color: Color(0xFF7EA2FF)),
                   ),
-                  child: const Icon(Icons.shield_moon_rounded, size: 54, color: Color(0xFFB9A5FF)),
                 ),
-                const SizedBox(height: 28),
-                const Text('SecureChat', textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800, letterSpacing: -0.8)),
-                const SizedBox(height: 10),
-                const Text('Özel konuşmaların için daha sakin bir alan.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 16, color: Colors.white70, height: 1.5)),
+                const SizedBox(height: 24),
+                const Text('GhostChat', textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 36, fontWeight: FontWeight.w800, letterSpacing: -1.0)),
+                const SizedBox(height: 8),
+                const Text('Gizliliğin en güçlü hâli', textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 16, color: Color(0xFF9BAAC7), height: 1.5)),
                 const SizedBox(height: 30),
                 Container(
-                  padding: const EdgeInsets.all(18),
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 19),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF14141F),
+                    color: const Color(0xFF080F1E),
                     borderRadius: BorderRadius.circular(22),
-                    border: Border.all(color: const Color(0xFF2A2838)),
+                    border: Border.all(color: const Color(0xFF1B2943)),
                   ),
                   child: const Column(children: [
-                    _FeatureRow(icon: Icons.lock_outline_rounded, title: 'Şifreli mesajlaşma', subtitle: 'Mesajlar gönderilmeden önce cihazda şifrelenir.'),
-                    SizedBox(height: 18),
-                    _FeatureRow(icon: Icons.visibility_off_outlined, title: 'Hayalet Mod', subtitle: 'Desteklenen sohbetlerde okunan mesajları temizleme akışı.'),
-                    SizedBox(height: 18),
-                    _FeatureRow(icon: Icons.devices_outlined, title: 'Hesabın, sohbetlerin', subtitle: 'Hesapla giriş yap ve kullanıcı adıyla sohbet başlat.'),
+                    _FeatureRow(icon: Icons.chat_bubble_outline_rounded, title: 'Mesajlaş', subtitle: 'Özel konuşmalarını tek bir yerde yönet.'),
+                    SizedBox(height: 17),
+                    _FeatureRow(icon: Icons.search_rounded, title: 'Ara', subtitle: 'Kişilerini bul ve hızlıca iletişim kur.'),
+                    SizedBox(height: 17),
+                    _FeatureRow(icon: Icons.videocam_outlined, title: 'Görüntülü Ara', subtitle: 'Sesli ve görüntülü görüşme başlat.'),
+                    SizedBox(height: 17),
+                    _FeatureRow(icon: Icons.photo_library_outlined, title: 'Fotoğraf & Video Paylaş', subtitle: 'Medyanı sohbet içinde paylaş.'),
+                    SizedBox(height: 17),
+                    _FeatureRow(icon: Icons.visibility_off_outlined, title: 'Hayalet Mod', subtitle: 'Okunan mesajların temizlenmesini yönet.'),
                   ]),
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 26),
                 FilledButton(
                   onPressed: () => _openAuth(context, register: false),
-                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
-                  child: const Text('Giriş yap'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(54),
+                    backgroundColor: const Color(0xFF315CFF),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  ),
+                  child: const Text('Başla', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                 ),
-                const SizedBox(height: 12),
-                OutlinedButton(
+                const SizedBox(height: 13),
+                Center(child: TextButton(
+                  onPressed: () => _openAuth(context, register: false),
+                  child: const Text('Zaten hesabın var mı? Giriş Yap', style: TextStyle(color: Color(0xFF9BAAC7))),
+                )),
+                Center(child: TextButton(
                   onPressed: () => _openAuth(context, register: true),
-                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(54)),
-                  child: const Text('Hesap oluştur'),
-                ),
-                const SizedBox(height: 22),
+                  child: const Text('Hesap oluştur', style: TextStyle(color: Color(0xFF7EA2FF))),
+                )),
+                const SizedBox(height: 8),
                 Text(
-                  initializing
-                    ? 'Güvenli bağlantı başlatılıyor…'
+                  initializing ? 'Güvenli bağlantı başlatılıyor…'
                     : initializationError != null
-                      ? 'Sunucu bağlantısı başlatılamadı. Giriş ekranları kullanılabilir; hesap işlemleri için bağlantı ayarı kontrol edilmeli.'
-                      : 'Hesap işlemleri için sunucu bağlantısı gerekir. Uygulama ekranları bağlantı olmadan da açılır.',
+                      ? 'Bağlantı başlatılamadı. Hesap işlemleri için bağlantı ayarı kontrol edilmeli.'
+                      : 'Hesap işlemleri için güvenli sunucu bağlantısı gerekir.',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white38, fontSize: 12, height: 1.5),
                 ),
@@ -193,8 +206,8 @@ class _FeatureRow extends StatelessWidget {
     children: [
       Container(
         width: 42, height: 42,
-        decoration: BoxDecoration(color: const Color(0xFF29223F), borderRadius: BorderRadius.circular(13)),
-        child: Icon(icon, color: const Color(0xFFB9A5FF), size: 22),
+        decoration: BoxDecoration(color: const Color(0xFF101D39), borderRadius: BorderRadius.circular(13)),
+        child: Icon(icon, color: const Color(0xFF7EA2FF), size: 22),
       ),
       const SizedBox(width: 13),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -728,7 +741,7 @@ class _ChatScreenState extends State<ChatScreen> {
             return Align(alignment: mine ? Alignment.centerRight : Alignment.centerLeft, child: Container(
               constraints: const BoxConstraints(maxWidth: 310), margin: const EdgeInsets.symmetric(vertical: 4),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(color: mine ? const Color(0xFF55418C) : const Color(0xFF20202D), borderRadius: BorderRadius.circular(16)),
+              decoration: BoxDecoration(color: mine ? const Color(0xFF2449A8) : const Color(0xFF20202D), borderRadius: BorderRadius.circular(16)),
               child: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
                 if (media != null) TextButton.icon(onPressed: () => _showMedia(media!), icon: Icon(media['media_type'] == 'video' ? Icons.play_circle_outline : Icons.image_outlined), label: Text('${media['media_type'] == 'video' ? 'Video' : 'Fotoğraf'}: ${media['name'] ?? 'Medya'}')) else Align(alignment: Alignment.centerLeft, child: Text(text.toString())),
                 const SizedBox(height: 4),
