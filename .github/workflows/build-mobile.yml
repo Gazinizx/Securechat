@@ -84,3 +84,5 @@ jobs:
           path: build/ios/ipa/*.ipa
           if-no-files-found: error
           retention-days: 14
+
+# Trigger build on main via repository update.
