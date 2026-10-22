@@ -18,6 +18,11 @@ Deno.serve(async (req: Request) => {
   let body: Record<string, unknown>;
   try { body = await req.json(); } catch { return respond(400, { error: "Invalid JSON body" }); }
   const action = body.action, username = typeof body.username === "string" ? body.username.trim().toLowerCase() : "", password = typeof body.password === "string" ? body.password : "", userId = typeof body.user_id === "string" ? body.user_id : "";
+  if (action === "list") {
+    const { data, error } = await adminClient.from("profiles").select("id,username").order("username");
+    if (error) return respond(400, { error: error.message });
+    return respond(200, { users: data ?? [] });
+  }
   if (action === "create") {
     if (!/^[a-z0-9_]{3,32}$/.test(username)) return respond(400, { error: "Username must be 3-32 chars: a-z, 0-9, underscore" });
     if (password.length < 10) return respond(400, { error: "New passwords must be at least 10 characters" });
