@@ -302,6 +302,7 @@ class _InboxScreenState extends State<InboxScreen> {
   void initState() {
     super.initState();
     _load();
+    _checkAdmin();
     _inboxChannel = _client.channel('securechat-inbox-${_client.auth.currentUser!.id}')
       ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'encrypted_messages', callback: (_) => _load())
       ..subscribe();
@@ -380,6 +381,13 @@ class _InboxScreenState extends State<InboxScreen> {
       _load();
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sohbet açılamadı: $e'))); }
   }
+  bool _isAdmin = false;
+  Future<void> _checkAdmin() async {
+    try {
+      final result = await _client.functions.invoke('securechat-admin-users', body: {'action': 'list'});
+      if (mounted) setState(() => _isAdmin = result.status == 200);
+    } catch (_) { if (mounted) setState(() => _isAdmin = false); }
+  }
   @override
   void dispose() {
     if (_inboxChannel != null) _client.removeChannel(_inboxChannel!);
@@ -388,6 +396,7 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('SecureChat', style: TextStyle(fontWeight: FontWeight.w700)), actions: [
+      if (_isAdmin) IconButton(tooltip: 'Yönetici', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminUsersScreen())), icon: const Icon(Icons.admin_panel_settings_outlined)),
       IconButton(tooltip: 'Yenile', onPressed: _load, icon: const Icon(Icons.refresh)),
       IconButton(tooltip: 'Çıkış', onPressed: () => _client.auth.signOut(), icon: const Icon(Icons.logout)),
     ]),
