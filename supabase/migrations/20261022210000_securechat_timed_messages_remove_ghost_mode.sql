@@ -48,3 +48,19 @@ begin
 end; $$;
 revoke all on function public.create_conversation_with_username(text) from public;
 grant execute on function public.create_conversation_with_username(text) to authenticated;
+
+create table if not exists public.user_encryption_keys (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  public_key text not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.user_encryption_keys enable row level security;
+drop policy if exists "Authenticated users can read public encryption keys" on public.user_encryption_keys;
+create policy "Authenticated users can read public encryption keys" on public.user_encryption_keys for select to authenticated using (true);
+drop policy if exists "Users can publish own encryption key" on public.user_encryption_keys;
+create policy "Users can publish own encryption key" on public.user_encryption_keys for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists "Users can update own encryption key" on public.user_encryption_keys;
+create policy "Users can update own encryption key" on public.user_encryption_keys for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+grant select, insert, update on public.user_encryption_keys to authenticated;
+revoke update on public.conversations from authenticated;
+grant update (message_expiry_seconds) on public.conversations to authenticated;
