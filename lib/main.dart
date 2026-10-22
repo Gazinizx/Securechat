@@ -250,8 +250,10 @@ class _AuthScreenState extends State<AuthScreen> {
         email: '$username@securechat.invalid',
         password: _password.text,
       );
-    } catch (_) {
-      if (mounted) setState(() => _error = 'Kullanıcı adı veya şifre hatalı ya da hesap henüz yönetici tarafından oluşturulmamış.');
+    } catch (e) {
+      // Show the actual Supabase/Auth failure instead of masking configuration and network errors.
+      debugPrint('SecureChat sign-in failed: ${e.runtimeType}: $e');
+      if (mounted) setState(() => _error = 'Giriş başarısız: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
