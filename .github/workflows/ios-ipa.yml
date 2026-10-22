@@ -83,7 +83,14 @@ jobs:
           data = plistlib.loads(p.read_bytes())
           data["NSCameraUsageDescription"] = "SecureChat uses the camera for video calls."
           data["NSMicrophoneUsageDescription"] = "SecureChat uses the microphone for voice and video calls."
+          # Register securechat://login-callback/ for Supabase email verification.
+          url_types = data.setdefault("CFBundleURLTypes", [])
+          if not any("securechat" in item.get("CFBundleURLSchemes", []) for item in url_types):
+              url_types.append({"CFBundleURLName": "com.gazinizx.securechat", "CFBundleURLSchemes": ["securechat"]})
           p.write_bytes(plistlib.dumps(data))
+          check = plistlib.loads(p.read_bytes())
+          if not any("securechat" in item.get("CFBundleURLSchemes", []) for item in check.get("CFBundleURLTypes", [])):
+              raise SystemExit("SecureChat email callback scheme was not added to Info.plist")
           PY
 
       - name: Install Apple signing certificate and provisioning profile
