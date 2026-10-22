@@ -809,7 +809,19 @@ class _ChatScreenState extends State<ChatScreen> {
       ]),
       body: Column(children: [
         if (_callStatus != null) Container(padding:const EdgeInsets.all(8),color:const Color(0xFF181824),child:Column(children:[Text(_callStatus!),if (_videoCall) SizedBox(height:180,child:Row(children:[Expanded(child:RTCVideoView(_remoteRenderer,objectFit:RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)),SizedBox(width:90,child:RTCVideoView(_localRenderer,mirror:true))])),TextButton.icon(onPressed:()=>_endCall(),icon:const Icon(Icons.call_end,color:Colors.redAccent),label:const Text('Aramayı bitir'))])),
-        if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
+        if (_error != null) Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            children: [
+              Text(_error!, style: const TextStyle(color: Colors.redAccent), textAlign: TextAlign.center),
+              if (!_keyReady) TextButton.icon(
+                onPressed: _sending ? null : _ensureConversationKey,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Yeniden dene'),
+              ),
+            ],
+          ),
+        ),
         Expanded(child: _loading ? const Center(child: CircularProgressIndicator()) : ListView.builder(
           controller: _scroll, padding: const EdgeInsets.all(12), itemCount: _messages.length,
           itemBuilder: (context, i) {
