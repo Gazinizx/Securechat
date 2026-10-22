@@ -648,29 +648,53 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) setState(() { _keyReady = false; _error = 'Sohbet üyesi bilgisi eksik. Sohbet listesinden yeniden aç.'; });
       return;
     }
-    final identity = await _loadOrCreateIdentity();
-    final ownPublic = base64Encode(identity.publicKey.bytes);
-    await _client.from('user_encryption_keys').upsert({
-      'user_id': userId,
-      'public_key': ownPublic,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }, onConflict: 'user_id');
-    final peerRow = await _client.from('user_encryption_keys').select('public_key').eq('user_id', peerId).maybeSingle();
-    if (peerRow == null || (peerRow['public_key'] as String? ?? '').isEmpty) {
-      if (mounted) setState(() { _keyReady = false; _error = 'Şifreleme güvenli şekilde hazırlanıyor. Karşı taraf SecureChat’i açtığında tekrar dene.'; });
-      return;
+    try {
+      final identity = await _loadOrCreateIdentity();
+      final ownPublic = base64Encode(identity.publicKey.bytes);
+      await _client.from('user_encryption_keys').upsert({
+        'user_id': userId,
+        'public_key': ownPublic,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, onConflict: 'user_id');
+
+      // The peer's inbox publishes its key asynchronously; retry to avoid a race.
+      Map<String, dynamic>? peerRow;
+      for (var attempt = 0; attempt < 15; attempt++) {
+        peerRow = await _client.from('user_encryption_keys')
+            .select('public_key').eq('user_id', peerId).maybeSingle();
+        if (peerRow != null && (peerRow['public_key'] as String? ?? '').isNotEmpty) break;
+        if (attempt < 14) {
+          if (mounted) setState(() {
+            _keyReady = false;
+            _error = 'Karşı tarafın şifreleme anahtarı bekleniyor… (${attempt + 1}/15)';
+          });
+          await Future<void>.delayed(const Duration(seconds: 1));
+        }
+      }
+      if (peerRow == null || (peerRow['public_key'] as String? ?? '').isEmpty) {
+        if (mounted) setState(() {
+          _keyReady = false;
+          _error = 'Karşı tarafın şifreleme anahtarı sunucuda görünmüyor. Karşı taraf uygulamayı açıp sohbet listesine girdikten sonra “Yeniden dene”ye bas.';
+        });
+        return;
+      }
+      final remotePublic = SimplePublicKey(base64Decode(peerRow['public_key'] as String), type: KeyPairType.x25519);
+      final shared = await X25519().sharedSecretKey(keyPair: identity, remotePublicKey: remotePublic);
+      final derivedKey = await Hkdf(
+        hmac: Hmac.sha256(),
+        outputLength: 32,
+      ).deriveKey(
+        secretKey: shared,
+        nonce: utf8.encode(_id),
+        info: utf8.encode('SecureChat-E2EE-v1'),
+      );
+      if (mounted) setState(() { _key = derivedKey; _keyReady = true; _error = null; });
+    } catch (e) {
+      if (mounted) setState(() {
+        _keyReady = false;
+        _error = 'Şifreleme anahtarı alınamadı: $e';
+      });
     }
-    final remotePublic = SimplePublicKey(base64Decode(peerRow['public_key'] as String), type: KeyPairType.x25519);
-    final shared = await X25519().sharedSecretKey(keyPair: identity, remotePublicKey: remotePublic);
-    _key = await Hkdf(
-      hmac: Hmac.sha256(),
-      outputLength: 32,
-    ).deriveKey(
-      secretKey: shared,
-      nonce: utf8.encode(_id),
-      info: utf8.encode('SecureChat-E2EE-v1'),
-    );
-    if (mounted) setState(() { _keyReady = true; _error = null; });
   }
   Future<String> _encrypt(String text) async {
     final box = await _cipher.encrypt(utf8.encode(text), secretKey: _key!);
