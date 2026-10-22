@@ -716,7 +716,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final payload = jsonEncode({'kind':'media','media_type': video ? 'video' : 'image','name':file.name,'path':mediaPath,'nonce':base64Encode(mediaBox.nonce),'mac':base64Encode(mediaBox.mac.bytes)});
       final encrypted = await _encrypt(payload);
       final envelope = jsonDecode(encrypted) as Map<String,dynamic>;
-      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'delete_after_read':false,'media_path':mediaPath});
+      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'media_path':mediaPath});
       await _loadMessages();
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Medya gönderilemedi: $e'))); }
     finally { if (mounted) setState(() => _mediaBusy = false); }
@@ -757,7 +757,6 @@ class _ChatScreenState extends State<ChatScreen> {
       await _client.from('encrypted_messages').insert({
         'conversation_id': _id, 'sender_id': _client.auth.currentUser!.id,
         'ciphertext': encrypted, 'nonce': obj['nonce'], 'key_version': 1,
-        'delete_after_read': false,
       });
       _input.clear();
       await _loadMessages();
