@@ -157,11 +157,6 @@ class LaunchScreen extends StatelessWidget {
                   child: const Text('Giriş yap'),
                 ),
                 const SizedBox(height: 12),
-                OutlinedButton(
-                  onPressed: () => _openAuth(context, register: true),
-                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(54)),
-                  child: const Text('Hesap oluştur'),
-                ),
                 const SizedBox(height: 22),
                 Text(
                   initializing
