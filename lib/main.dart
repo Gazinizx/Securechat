@@ -254,12 +254,11 @@ class _AuthScreenState extends State<AuthScreen> {
           throw const FormatException('Kullanıcı adı 3-32 karakter olmalı (a-z, 0-9, _).');
         }
         // Check availability before creating the auth account so the user can choose another name.
-        final existing = await _client
-            .from('profiles')
-            .select('username')
-            .eq('username', username)
-            .maybeSingle();
-        if (existing != null) {
+        final isTaken = await _client.rpc(
+          'is_username_taken',
+          params: {'candidate_username': username},
+        ) as bool;
+        if (isTaken) {
           throw const FormatException('Bu kullanıcı adı kullanılıyor. Lütfen başka bir kullanıcı adı seç.');
         }
         final result = await _client.auth.signUp(
