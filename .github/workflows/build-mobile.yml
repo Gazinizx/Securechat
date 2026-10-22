@@ -86,7 +86,7 @@ jobs:
           retention-days: 14
 
   ios-ipa:
-    name: Build unsigned iOS IPA
+    name: Build signed iOS IPA
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -103,26 +103,114 @@ jobs:
           if [ ! -f android/gradlew ] || [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
             flutter create --platforms=android,ios --org com.securechat.app .
           fi
+      - name: Install Apple signing certificate and profile
+        env:
+          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$IOS_P12_BASE64" || (echo "::error::Missing IOS_P12_BASE64 GitHub secret" && exit 1)
+          test -n "$IOS_P12_PASSWORD" || (echo "::error::Missing IOS_P12_PASSWORD GitHub secret" && exit 1)
+          test -n "$IOS_PROVISIONING_PROFILE_BASE64" || (echo "::error::Missing IOS_PROVISIONING_PROFILE_BASE64 GitHub secret" && exit 1)
+          test -n "$IOS_TEAM_ID" || (echo "::error::Missing IOS_TEAM_ID GitHub secret" && exit 1)
+
+          KEYCHAIN_PATH="$RUNNER_TEMP/securechat-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          echo "$KEYCHAIN_PASSWORD" > "$RUNNER_TEMP/keychain-password"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import <(printf '%s' "$IOS_P12_BASE64" | base64 --decode) \
+            -k "$KEYCHAIN_PATH" -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          PROFILE_PATH="$RUNNER_TEMP/securechat.mobileprovision"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+          security cms -D -i "$PROFILE_PATH" > "$RUNNER_TEMP/profile.plist"
+          PROFILE_TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$RUNNER_TEMP/profile.plist")
+          PROFILE_APP_ID=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/profile.plist")
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/profile.plist")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/profile.plist")
+          BUNDLE_ID="${PROFILE_APP_ID#*.}"
+          if [ "$PROFILE_TEAM_ID" != "$IOS_TEAM_ID" ]; then
+            echo "::error::IOS_TEAM_ID does not match the provisioning profile Team ID"
+            exit 1
+          fi
+          case "$BUNDLE_ID" in
+            *\*) echo "::error::Provisioning profile must use an explicit App ID, not a wildcard"; exit 1 ;;
+          esac
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          echo "IOS_BUNDLE_ID=$BUNDLE_ID" >> "$GITHUB_ENV"
+          echo "IOS_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "IOS_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "IOS_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "Signing profile and Team ID validated; bundle identifier detected from profile."
+
+      - name: Configure bundle identifier for profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path("ios/Runner.xcodeproj/project.pbxproj")
+          text = p.read_text()
+          bundle_id = os.environ["IOS_BUNDLE_ID"]
+          import re
+          text, count = re.subn(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};', text)
+          if count == 0:
+              raise SystemExit("No PRODUCT_BUNDLE_IDENTIFIER setting found in generated Xcode project")
+          p.write_text(text)
+          print(f"Configured {count} bundle identifier settings to match the provisioning profile.")
+          PY
+
       - name: Install dependencies
         run: flutter pub get
-      - name: Build unsigned IPA
+      - name: Build signed IPA
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        shell: bash
         run: |
-          test -n "$SUPABASE_URL" || (echo "SUPABASE_URL secret is empty" && exit 1)
-          test -n "$SUPABASE_ANON_KEY" || (echo "SUPABASE_ANON_KEY secret is empty" && exit 1)
-          flutter build ipa --release --no-codesign \
+          set -euo pipefail
+          test -n "$SUPABASE_URL" || (echo "::error::SUPABASE_URL secret is empty" && exit 1)
+          test -n "$SUPABASE_ANON_KEY" || (echo "::error::SUPABASE_ANON_KEY secret is empty" && exit 1)
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>teamID</key><string>$IOS_TEAM_ID</string>
+            <key>provisioningProfiles</key>
+            <dict><key>$IOS_BUNDLE_ID</key><string>$IOS_PROFILE_NAME</string></dict>
+            <key>destination</key><string>export</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          PLIST
+          plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
+          flutter build ipa --release --export-options-plist="$RUNNER_TEMP/ExportOptions.plist" \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
             --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
-          mkdir -p build/ios/ipa/Payload
-          cp -R build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app build/ios/ipa/Payload/
-          cd build/ios/ipa
-          /usr/bin/zip -qry Securechat-unsigned.ipa Payload
-      - name: Upload IPA
+          test -n "$(find build/ios/ipa -maxdepth 1 -name '*.ipa' -print -quit)"
+          IPA_PATH="$(find build/ios/ipa -maxdepth 1 -name '*.ipa' -print -quit)"
+          unzip -q "$IPA_PATH" -d "$RUNNER_TEMP/ipa-check"
+          codesign --verify --deep --strict "$RUNNER_TEMP/ipa-check/Payload/Runner.app"
+          codesign -dv "$RUNNER_TEMP/ipa-check/Payload/Runner.app" 2>&1 | grep -E 'TeamIdentifier|Identifier'
+          echo "Signed IPA verified: $IPA_PATH"
+
+      - name: Upload signed IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Securechat-iOS-IPA-Unsigned
+          name: Securechat-iOS-IPA-Signed
           path: build/ios/ipa/*.ipa
           if-no-files-found: error
           retention-days: 14
