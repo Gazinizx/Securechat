@@ -222,63 +222,46 @@ class AuthScreen extends StatefulWidget {
   State<AuthScreen> createState() => _AuthScreenState();
 }
 class _AuthScreenState extends State<AuthScreen> {
-  final _email = TextEditingController();
-  final _password = TextEditingController();
   final _username = TextEditingController();
-  bool _register = false;
+  final _password = TextEditingController();
   bool _busy = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _register = widget.initialRegister;
+
   }
 
   Future<void> _submit() async {
     if (!_supabaseReady) {
-      setState(() {
-        _error = _supabaseInitError != null
-          ? 'Sunucu bağlantısı başlatılamadı. Ayrıntı: $_supabaseInitError'
-          : _supabaseInitializing
-            ? 'Güvenli bağlantı başlatılıyor. Birkaç saniye sonra tekrar dene.'
-            : 'Hesap işlemleri için sunucu bağlantısı henüz yapılandırılmamış.';
-      });
+      setState(() => _error = _supabaseInitError ?? 'Supabase bağlantısı henüz yapılandırılmamış.');
+      return;
+    }
+    final username = _username.text.trim().toLowerCase();
+    if (!RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(username)) {
+      setState(() => _error = 'Kullanıcı adı 3-32 karakter olmalı (a-z, 0-9, _).');
+      return;
+    }
+    if (_password.text.length < 6) {
+      setState(() => _error = 'Şifre en az 6 karakter olmalı.');
       return;
     }
     setState(() { _busy = true; _error = null; });
     try {
-      if (_register) {
-        final username = _username.text.trim().toLowerCase();
-        if (!RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(username)) {
-          throw const FormatException('Kullanıcı adı 3-32 karakter olmalı (a-z, 0-9, _).');
-        }
-        // Check availability before creating the auth account so the user can choose another name.
-        final isTaken = await _client.rpc(
-          'is_username_taken',
-          params: {'candidate_username': username},
-        ) as bool;
-        if (isTaken) {
-          throw const FormatException('Bu kullanıcı adı kullanılıyor. Lütfen başka bir kullanıcı adı seç.');
-        }
-        final result = await _client.auth.signUp(
-          email: _email.text.trim(),
-          password: _password.text,
-          data: {'username': username},
-          emailRedirectTo: 'securechat://login-callback/',
-        );
-        if (mounted && result.session == null) setState(() => _error = 'E-posta doğrulaması açıksa gelen kutunu kontrol et; profil otomatik oluşturulur.');
-      } else {
-        await _client.auth.signInWithPassword(email: _email.text.trim(), password: _password.text);
-      }
-    } catch (e) {
-      if (mounted) setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+      // Supabase Auth requires an email/phone identifier; users see and enter only usernames.
+      await _client.auth.signInWithPassword(
+        email: '$username@securechat.invalid',
+        password: _password.text,
+      );
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Kullanıcı adı veya şifre hatalı ya da hesap henüz yönetici tarafından oluşturulmamış.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
   @override
-  void dispose() { _email.dispose(); _password.dispose(); _username.dispose(); super.dispose(); }
+  void dispose() { _password.dispose(); _username.dispose(); super.dispose(); }
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(child: Center(child: SingleChildScrollView(padding: const EdgeInsets.all(24), child: ConstrainedBox(
@@ -288,21 +271,16 @@ class _AuthScreenState extends State<AuthScreen> {
         const SizedBox(height: 16),
         const Text('SecureChat', textAlign: TextAlign.center, style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
-        Text(_register ? 'Yeni hesap oluştur' : 'Hesabına giriş yap', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60)),
+        const Text('Yalnızca yönetici tarafından oluşturulan hesaplarla giriş yap.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white60)),
         const SizedBox(height: 28),
-        if (_register) ...[
-          TextField(controller: _username, autocorrect: false, decoration: const InputDecoration(labelText: 'Kullanıcı adı', prefixIcon: Icon(Icons.alternate_email))),
-          const SizedBox(height: 12),
-        ],
-        TextField(controller: _email, keyboardType: TextInputType.emailAddress, autocorrect: false, decoration: const InputDecoration(labelText: 'E-posta', prefixIcon: Icon(Icons.email_outlined))),
+        TextField(controller: _username, autocorrect: false, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Kullanıcı adı', prefixIcon: Icon(Icons.person_outline))),
         const SizedBox(height: 12),
-        TextField(controller: _password, obscureText: true, decoration: const InputDecoration(labelText: 'Şifre', prefixIcon: Icon(Icons.lock_outline))),
+        TextField(controller: _password, obscureText: true, onSubmitted: (_) => _busy ? null : _submit(), decoration: const InputDecoration(labelText: 'Şifre', prefixIcon: Icon(Icons.lock_outline))),
         if (_error != null) ...[const SizedBox(height: 12), Text(_error!, style: const TextStyle(color: Colors.redAccent))],
         const SizedBox(height: 20),
-        FilledButton(onPressed: _busy ? null : _submit, child: Text(_busy ? 'Bekle...' : (_register ? 'Hesap oluştur' : 'Giriş yap'))),
-        TextButton(onPressed: _busy ? null : () => setState(() { _register = !_register; _error = null; }), child: Text(_register ? 'Zaten hesabın var mı? Giriş yap' : 'Hesabın yok mu? Kayıt ol')),
+        FilledButton(onPressed: _busy ? null : _submit, child: Text(_busy ? 'Bekle...' : 'Giriş yap')),
         const SizedBox(height: 12),
-        const Text('Mesaj içeriği AES-GCM ile cihazda şifrelenir. Sohbetin iki tarafı da aynı gizli ifadeyi paylaşmalıdır. Bu uygulama henüz bağımsız güvenlik denetiminden geçmemiştir.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 12)),
+        const Text('Mesajlar cihazda AES-GCM ile şifrelenir. Bu uygulama bağımsız güvenlik denetiminden geçmemiştir.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 12)),
       ]),
     )))),
   );
@@ -323,7 +301,7 @@ class _InboxScreenState extends State<InboxScreen> {
   List<Map<String, dynamic>> _chats = [];
   bool _busy = true;
   String? _error;
-  final _search = TextEditingController();
+  List<Map<String,dynamic>> _accounts = [];
   RealtimeChannel? _inboxChannel;
   @override
   void initState() {
@@ -336,6 +314,7 @@ class _InboxScreenState extends State<InboxScreen> {
   Future<void> _load() async {
     try {
       final uid = _client.auth.currentUser!.id;
+      _accounts = List<Map<String,dynamic>>.from(await _client.from('profiles').select('id,username').neq('id', uid).order('username'));
       final memberships = await _client.from('conversation_members').select('conversation_id').eq('user_id', uid);
       final ids = memberships.map((e) => e['conversation_id'] as String).toList();
       if (ids.isEmpty) { if (mounted) setState(() { _chats = []; _busy = false; _error = null; }); return; }
@@ -408,34 +387,52 @@ class _InboxScreenState extends State<InboxScreen> {
   }
   @override
   void dispose() {
-    _search.dispose();
     if (_inboxChannel != null) _client.removeChannel(_inboxChannel!);
     super.dispose();
   }
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('SecureChat', style: TextStyle(fontWeight: FontWeight.w700)), actions: [
+      IconButton(tooltip: 'Yenile', onPressed: _load, icon: const Icon(Icons.refresh)),
       IconButton(tooltip: 'Çıkış', onPressed: () => _client.auth.signOut(), icon: const Icon(Icons.logout)),
     ]),
     body: RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(16), children: [
-      TextField(controller: _search, onChanged: (_) => setState(() {}), decoration: InputDecoration(hintText: 'Sohbet ara', prefixIcon: const Icon(Icons.search), filled: true, fillColor: const Color(0xFF151520), border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none))),
-      const SizedBox(height: 20),
+      const Text('Hesaplar', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 6),
+      const Text('Bir kullanıcıya dokunarak sohbeti aç.', style: TextStyle(color: Colors.white54)),
+      const SizedBox(height: 14),
       if (_busy) const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())),
-      if (_error != null) Text('Sohbetler yüklenemedi: $_error', style: const TextStyle(color: Colors.redAccent)),
-      if (!_busy && _chats.where((c) => _title(c).toLowerCase().contains(_search.text.toLowerCase())).isEmpty)
-        const Padding(padding: EdgeInsets.symmetric(vertical: 42), child: Column(children: [Icon(Icons.forum_outlined, size: 48, color: Color(0xFFB9A5FF)), SizedBox(height: 12), Text('Henüz sohbet yok', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)), SizedBox(height: 6), Text('Yeni sohbet başlatmak için kalem simgesine dokun.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54))])),
-      for (final chat in _chats.where((c) => _title(c).toLowerCase().contains(_search.text.toLowerCase())))
-        ListTile(leading: CircleAvatar(backgroundColor: const Color(0xFF28223D), child: Text(_title(chat).isNotEmpty ? _title(chat)[0].toUpperCase() : '?')),
+      if (_error != null) Text('Veriler yüklenemedi: $_error', style: const TextStyle(color: Colors.redAccent)),
+      if (!_busy && _accounts.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 30), child: Text('Şu anda başka kullanıcı hesabı yok.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54))),
+      for (final account in _accounts)
+        ListTile(
+          leading: CircleAvatar(backgroundColor: const Color(0xFF28223D), child: Text((account['username'] as String? ?? '?').isNotEmpty ? (account['username'] as String)[0].toUpperCase() : '?')),
+          title: Text(account['username'] as String? ?? 'Kullanıcı'),
+          trailing: const Icon(Icons.chat_bubble_outline),
+          onTap: () async {
+            try {
+              final id = await _client.rpc('create_conversation_with_username', params: {'p_username': account['username'], 'p_ghost_mode': false});
+              await _load();
+              if (!mounted) return;
+              final chat = _chats.firstWhere((c) => c['id'] == id, orElse: () => {'id': id, 'ghost_mode': false, 'conversation_members': []});
+              await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: account['username'] as String)));
+              _load();
+            } catch (e) {
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sohbet açılamadı: $e')));
+            }
+          },
+        ),
+      const Divider(height: 28),
+      const Text('Son sohbetler', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+      for (final chat in _chats)
+        ListTile(
+          leading: CircleAvatar(child: Text(_title(chat).isNotEmpty ? _title(chat)[0].toUpperCase() : '?')),
           title: Text(_title(chat)),
-          subtitle: Text(chat['last_message_at'] == null
-            ? (chat['ghost_mode'] == true ? 'Hayalet Mod açık · Henüz mesaj yok' : 'Henüz mesaj yok')
-            : '${chat['last_message_sender'] == _client.auth.currentUser!.id ? 'Sen: ' : ''}Şifreli mesaj${chat['ghost_mode'] == true ? ' · Hayalet Mod' : ''}'),
-          trailing: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            if (chat['last_message_at'] != null) Text(_clockLabel(chat['last_message_at']), style: const TextStyle(fontSize: 11, color: Colors.white54)),
-            const Icon(Icons.chevron_right),
-          ]), onTap: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: _title(chat)))); _load(); }),
+          subtitle: Text(chat['ghost_mode'] == true ? 'Hayalet Mod açık' : 'Şifreli sohbet'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: _title(chat)))); _load(); },
+        ),
     ])),
-    floatingActionButton: FloatingActionButton(onPressed: _newChat, child: const Icon(Icons.edit_outlined)),
   );
 }
 
