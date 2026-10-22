@@ -315,16 +315,19 @@ class _InboxScreenState extends State<InboxScreen> {
     try {
       final uid = _client.auth.currentUser?.id;
       if (uid == null) return;
-      var privateValue = await _storage.read(key: 'securechat_identity_private_v1');
-      var publicValue = await _storage.read(key: 'securechat_identity_public_v1');
+      // Identity keys must be isolated per Supabase account on shared devices.
+      final privateStorageKey = 'securechat_identity_private_v1_$uid';
+      final publicStorageKey = 'securechat_identity_public_v1_$uid';
+      var privateValue = await _storage.read(key: privateStorageKey);
+      var publicValue = await _storage.read(key: publicStorageKey);
       if (privateValue == null || publicValue == null) {
         final pair = await X25519().newKeyPair();
         final privateBytes = await pair.extractPrivateKeyBytes();
         final publicKey = await pair.extractPublicKey();
         privateValue = base64Encode(privateBytes);
         publicValue = base64Encode(publicKey.bytes);
-        await _storage.write(key: 'securechat_identity_private_v1', value: privateValue);
-        await _storage.write(key: 'securechat_identity_public_v1', value: publicValue);
+        await _storage.write(key: privateStorageKey, value: privateValue);
+        await _storage.write(key: publicStorageKey, value: publicValue);
       }
       await _client.from('user_encryption_keys').upsert({
         'user_id': uid,
@@ -503,8 +506,8 @@ class _ChatScreenState extends State<ChatScreen> {
   int _expirySeconds = 0;
   String? _error;
   String get _id => widget.conversation['id'].toString();
-  String get _privateKeyName => 'securechat_identity_private_v1';
-  String get _publicKeyName => 'securechat_identity_public_v1';
+  String get _privateKeyName => 'securechat_identity_private_v1_${_client.auth.currentUser!.id}';
+  String get _publicKeyName => 'securechat_identity_public_v1_${_client.auth.currentUser!.id}';
   @override
   void initState() { super.initState(); _expirySeconds = (widget.conversation['message_expiry_seconds'] as int?) ?? 0; _init(); }
   Future<void> _setExpiry(int seconds) async {
