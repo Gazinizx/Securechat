@@ -146,7 +146,7 @@ class LaunchScreen extends StatelessWidget {
                   child: const Column(children: [
                     _FeatureRow(icon: Icons.lock_outline_rounded, title: 'Şifreli mesajlaşma', subtitle: 'Mesajlar gönderilmeden önce cihazda şifrelenir.'),
                     SizedBox(height: 18),
-                    _FeatureRow(icon: Icons.visibility_off_outlined, title: 'Hayalet Mod', subtitle: 'Desteklenen sohbetlerde okunan mesajları temizleme akışı.'),
+                    _FeatureRow(icon: Icons.visibility_off_outlined, title: 'Süreli mesajlar', subtitle: 'İstersen mesajların 2 saatten 1 haftaya kadar sonra silinsin.'),
                     SizedBox(height: 18),
                     _FeatureRow(icon: Icons.devices_outlined, title: 'Hesabın, sohbetlerin', subtitle: 'Hesapla giriş yap ve kullanıcı adıyla sohbet başlat.'),
                   ]),
@@ -317,7 +317,7 @@ class _InboxScreenState extends State<InboxScreen> {
       final memberships = await _client.from('conversation_members').select('conversation_id').eq('user_id', uid);
       final ids = memberships.map((e) => e['conversation_id'] as String).toList();
       if (ids.isEmpty) { if (mounted) setState(() { _chats = []; _busy = false; _error = null; }); return; }
-      final rows = await _client.from('conversations').select('id,ghost_mode,created_at').inFilter('id', ids).order('created_at', ascending: false);
+      final rows = await _client.from('conversations').select('id,message_expiry_seconds,created_at').inFilter('id', ids).order('created_at', ascending: false);
       final memberRows = await _client.from('conversation_members').select('conversation_id,user_id').inFilter('conversation_id', ids);
       final otherIds = memberRows.map((m) => m['user_id'] as String).where((id) => id != uid).toSet().toList();
       final profileRows = otherIds.isEmpty ? <Map<String,dynamic>>[] : List<Map<String,dynamic>>.from(await _client.from('profiles').select('id,username').inFilter('id', otherIds));
@@ -365,21 +365,17 @@ class _InboxScreenState extends State<InboxScreen> {
   Future<void> _newChat() async {
     final result = await showDialog<Map<String, dynamic>>(context: context, builder: (context) {
       final controller = TextEditingController();
-      var ghost = false;
-      return StatefulBuilder(builder: (context, setDialogState) => AlertDialog(title: const Text('Yeni sohbet'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: controller, autofocus: true, decoration: const InputDecoration(labelText: 'Kullanıcı adı')),
-          SwitchListTile(value: ghost, onChanged: (v) => setDialogState(() => ghost = v), title: const Text('Hayalet Mod')),
-        ]),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('İptal')), FilledButton(onPressed: () => Navigator.pop(context, {'username': controller.text.trim(), 'ghost': ghost}), child: const Text('Oluştur'))]));
+      return AlertDialog(title: const Text('Yeni sohbet'),
+        content: TextField(controller: controller, autofocus: true, decoration: const InputDecoration(labelText: 'Kullanıcı adı')),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('İptal')), FilledButton(onPressed: () => Navigator.pop(context, {'username': controller.text.trim()}), child: const Text('Oluştur'))]);
     });
     if (result == null || (result['username'] as String).isEmpty || !mounted) return;
     try {
-      final id = await _client.rpc('create_conversation_with_username', params: {'p_username': (result['username'] as String).toLowerCase(), 'p_ghost_mode': result['ghost']});
+      final id = await _client.rpc('create_conversation_with_username', params: {'p_username': (result['username'] as String).toLowerCase()});
       if (!mounted) return;
       await _load();
       if (!mounted) return;
-      final chat = _chats.firstWhere((c) => c['id'] == id, orElse: () => {'id': id, 'ghost_mode': result['ghost'], 'conversation_members': []});
+      final chat = _chats.firstWhere((c) => c['id'] == id, orElse: () => {'id': id, 'message_expiry_seconds': 0, 'conversation_members': []});
       await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: result['username'] as String)));
       _load();
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sohbet açılamadı: $e'))); }
@@ -418,10 +414,10 @@ class _InboxScreenState extends State<InboxScreen> {
           trailing: const Icon(Icons.chat_bubble_outline),
           onTap: () async {
             try {
-              final id = await _client.rpc('create_conversation_with_username', params: {'p_username': account['username'], 'p_ghost_mode': false});
+              final id = await _client.rpc('create_conversation_with_username', params: {'p_username': account['username']});
               await _load();
               if (!mounted) return;
-              final chat = _chats.firstWhere((c) => c['id'] == id, orElse: () => {'id': id, 'ghost_mode': false, 'conversation_members': []});
+              final chat = _chats.firstWhere((c) => c['id'] == id, orElse: () => {'id': id, 'message_expiry_seconds': 0, 'conversation_members': []});
               await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: account['username'] as String)));
               _load();
             } catch (e) {
@@ -435,7 +431,7 @@ class _InboxScreenState extends State<InboxScreen> {
         ListTile(
           leading: CircleAvatar(child: Text(_title(chat).isNotEmpty ? _title(chat)[0].toUpperCase() : '?')),
           title: Text(_title(chat)),
-          subtitle: Text(chat['ghost_mode'] == true ? 'Hayalet Mod açık' : 'Şifreli sohbet'),
+          subtitle: Text((chat['message_expiry_seconds'] as int? ?? 0) > 0 ? 'Süreli mesajlar açık' : 'Şifreli sohbet'),
           trailing: const Icon(Icons.chevron_right),
           onTap: () async { await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: _title(chat)))); _load(); },
         ),
@@ -477,24 +473,28 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _keyReady = false;
   bool _loading = true;
   bool _sending = false;
-  bool _ghostMode = false;
+  int _expirySeconds = 0;
   String? _error;
   String get _id => widget.conversation['id'].toString();
   String get _privateKeyName => 'securechat_identity_private_v1';
   String get _publicKeyName => 'securechat_identity_public_v1';
   @override
-  void initState() { super.initState(); _ghostMode = widget.conversation['ghost_mode'] == true; _init(); }
-  Future<void> _toggleGhostMode() async {
-    final next = !_ghostMode;
+  void initState() { super.initState(); _expirySeconds = (widget.conversation['message_expiry_seconds'] as int?) ?? 0; _init(); }
+  Future<void> _setExpiry(int seconds) async {
     try {
-      await _client.from('conversations').update({'ghost_mode': next}).eq('id', _id);
+      await _client.from('conversations').update({'message_expiry_seconds': seconds}).eq('id', _id);
       if (!mounted) return;
-      setState(() { _ghostMode = next; widget.conversation['ghost_mode'] = next; });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(next ? 'Hayalet Mod açıldı' : 'Hayalet Mod kapatıldı')));
+      setState(() {
+        _expirySeconds = seconds;
+        widget.conversation['message_expiry_seconds'] = seconds;
+      });
+      final label = seconds == 0 ? 'Süreli mesajlar kapatıldı' : 'Süreli mesajlar açıldı';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(label)));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hayalet Mod değiştirilemedi: $e')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Süreli mesaj ayarı değiştirilemedi: $e')));
     }
   }
+
   Future<void> _prepareCall({required bool video}) async {
     if (_callBusy) return;
     setState(() { _callBusy = true; _videoCall = video; _callStatus = null; });
@@ -660,8 +660,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _loadMessages() async {
     try {
       final rows = await _client.from('encrypted_messages').select().eq('conversation_id', _id).order('created_at');
+      final now = DateTime.now().toUtc();
       final decoded = <Map<String,dynamic>>[];
       for (final row in rows) {
+        final expiresAt = row['expires_at'];
+        if (expiresAt != null && !DateTime.parse(expiresAt.toString()).toUtc().isAfter(now)) continue;
         final item = Map<String,dynamic>.from(row);
         if (_key != null) item['display_text'] = await _decrypt(item['ciphertext'] as String);
         decoded.add(item);
@@ -687,7 +690,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final payload = jsonEncode({'kind':'media','media_type': video ? 'video' : 'image','name':file.name,'path':mediaPath,'nonce':base64Encode(mediaBox.nonce),'mac':base64Encode(mediaBox.mac.bytes)});
       final encrypted = await _encrypt(payload);
       final envelope = jsonDecode(encrypted) as Map<String,dynamic>;
-      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'delete_after_read':_ghostMode,'media_path':mediaPath});
+      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'delete_after_read':false,'media_path':mediaPath});
       await _loadMessages();
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Medya gönderilemedi: $e'))); }
     finally { if (mounted) setState(() => _mediaBusy = false); }
@@ -728,7 +731,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await _client.from('encrypted_messages').insert({
         'conversation_id': _id, 'sender_id': _client.auth.currentUser!.id,
         'ciphertext': encrypted, 'nonce': obj['nonce'], 'key_version': 1,
-        'delete_after_read': _ghostMode,
+        'delete_after_read': false,
       });
       _input.clear();
       await _loadMessages();
@@ -737,15 +740,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
   Future<void> _leave() async {
     await _endCall();
-    if (_ghostMode) {
-      try {
-        final rows = await _client.from('encrypted_messages').select('media_path,read_at').eq('conversation_id',_id).eq('delete_after_read',true);
-        final paths = rows.where((row) => row['read_at'] != null && row['media_path'] != null).map((row) => row['media_path'] as String).toList();
-        if (paths.isNotEmpty) await _client.storage.from('securechat-media').remove(paths);
-      } catch (_) {}
-      try { await _client.rpc('cleanup_ghost_messages', params: {'p_conversation_id': _id}); } catch (_) {}
-      try { await _client.from('call_signals').delete().eq('conversation_id',_id); } catch (_) {}
-    }
+    
     if (mounted) Navigator.pop(context);
   }
   @override
@@ -759,7 +754,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: Text(widget.title), leading: IconButton(onPressed: _leave, icon: const Icon(Icons.arrow_back)), actions: [
-        IconButton(tooltip: _ghostMode ? 'Hayalet Mod açık — kapat' : 'Hayalet Mod kapalı — aç', onPressed: _toggleGhostMode, icon: Icon(_ghostMode ? Icons.visibility_off : Icons.visibility_outlined, color: _ghostMode ? const Color(0xFFB9A5FF) : null)),
+        PopupMenuButton<int>(tooltip: 'Süreli mesajlar', initialValue: _expirySeconds, onSelected: _setExpiry, icon: Icon(Icons.timer_outlined, color: _expirySeconds > 0 ? const Color(0xFFB9A5FF) : null), itemBuilder: (_) => const [PopupMenuItem(value: 0, child: Text('Kapalı')), PopupMenuItem(value: 7200, child: Text('2 saat')), PopupMenuItem(value: 21600, child: Text('6 saat')), PopupMenuItem(value: 43200, child: Text('12 saat')), PopupMenuItem(value: 86400, child: Text('24 saat')), PopupMenuItem(value: 604800, child: Text('1 hafta'))]),
         IconButton(tooltip:'Sesli ara',onPressed:_callBusy || _callStatus != null ? null : () => _startCall(video:false),icon:const Icon(Icons.call_outlined)),
         IconButton(tooltip:'Görüntülü ara',onPressed:_callBusy || _callStatus != null ? null : () => _startCall(video:true),icon:const Icon(Icons.videocam_outlined)),
       ]),
