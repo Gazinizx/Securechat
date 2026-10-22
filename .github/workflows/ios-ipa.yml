@@ -36,6 +36,30 @@ jobs:
 
       - run: flutter create --platforms=android,ios .
 
+      - name: Configure Android internet and media-call permissions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
+          marker = '    <application'
+          permissions = [
+              'android.permission.INTERNET',
+              'android.permission.CAMERA',
+              'android.permission.RECORD_AUDIO',
+              'android.permission.MODIFY_AUDIO_SETTINGS',
+          ]
+          missing = [name for name in permissions if f'android:name="{name}"' not in s]
+          if missing:
+              lines = ''.join(f'    <uses-permission android:name="{name}" />\\n' for name in missing)
+              if marker not in s:
+                  raise SystemExit('Android manifest application marker not found')
+              s = s.replace(marker, lines + marker, 1)
+              p.write_text(s)
+          if 'android.permission.INTERNET' not in p.read_text():
+              raise SystemExit('INTERNET permission was not added to release manifest')
+          PY
+
       - name: Set SecureChat iOS bundle identifier
         run: |
           set -euo pipefail
