@@ -34,6 +34,7 @@ create table if not exists public.encrypted_messages (
   key_version integer not null default 1,
   read_by uuid[] not null default '{}'::uuid[],
   read_at timestamptz,
+  delivered_at timestamptz,
   expires_at timestamptz,
   media_path text,
   created_at timestamptz not null default now()
@@ -127,6 +128,20 @@ begin
 end;
 $$;
 
+alter table public.encrypted_messages add column if not exists delivered_at timestamptz;
+
+create or replace function public.mark_conversation_delivered(p_conversation_id uuid)
+returns void language plpgsql security definer set search_path = public
+as $
+begin
+  if not exists(select 1 from public.conversation_members where conversation_id=p_conversation_id and user_id=auth.uid()) then
+    raise exception 'Not a conversation member';
+  end if;
+  update public.encrypted_messages set delivered_at=coalesce(delivered_at,now())
+    where conversation_id=p_conversation_id and sender_id<>auth.uid() and delivered_at is null;
+end;
+$;
+
 create or replace function public.mark_conversation_read(p_conversation_id uuid)
 returns void language plpgsql security definer set search_path = public
 as $$
@@ -138,7 +153,9 @@ end;
 $$;
 
 revoke all on function public.create_conversation_with_username(text) from public;
+revoke all on function public.mark_conversation_delivered(uuid) from public;
 revoke all on function public.mark_conversation_read(uuid) from public;
+grant execute on function public.mark_conversation_delivered(uuid) to authenticated;
 grant execute on function public.create_conversation_with_username(text) to authenticated;
 grant execute on function public.mark_conversation_read(uuid) to authenticated;
 
