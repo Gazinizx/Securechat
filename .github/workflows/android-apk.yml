@@ -1,6 +1,10 @@
 name: Android APK
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'supabase/**'
 permissions:
   contents: read
 jobs:
