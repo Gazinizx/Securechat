@@ -1,8 +1,8 @@
 name: SecureChat Android APK + iOS IPA
-# Rebuild after the Supabase publishable key secret was updated.
-on:
+"on":
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 permissions:
   contents: read
@@ -15,7 +15,6 @@ jobs:
         with:
           channel: stable
           cache: true
-
       - name: Validate signing secrets
         env:
           IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
@@ -32,9 +31,7 @@ jobs:
               exit 1
             fi
           done
-
       - run: flutter create --platforms=android,ios .
-
       - name: Configure Android internet and media-call permissions
         run: |
           python3 - <<'PY'
@@ -57,7 +54,6 @@ jobs:
               p.write_text(s)
           if 'android.permission.INTERNET' not in p.read_text():
               raise SystemExit('INTERNET permission was not added to release manifest')
-          # Register the app's email-verification callback deep link.
           s = p.read_text()
           if 'android:scheme="securechat"' not in s:
               activity_end = s.find('</activity>')
@@ -75,7 +71,6 @@ jobs:
           if 'android:scheme="securechat"' not in p.read_text():
               raise SystemExit('SecureChat email callback scheme was not added')
           PY
-
       - name: Set SecureChat iOS bundle identifier
         run: |
           set -euo pipefail
@@ -88,7 +83,6 @@ jobs:
           if "com.gazinizx.securechat" not in p.read_text():
               raise SystemExit("Could not set SecureChat bundle identifier")
           PY
-
       - name: Configure iOS media-call permissions
         run: |
           python3 - <<'PY'
@@ -98,7 +92,6 @@ jobs:
           data = plistlib.loads(p.read_bytes())
           data["NSCameraUsageDescription"] = "SecureChat uses the camera for video calls."
           data["NSMicrophoneUsageDescription"] = "SecureChat uses the microphone for voice and video calls."
-          # Register securechat://login-callback/ for Supabase email verification.
           url_types = data.setdefault("CFBundleURLTypes", [])
           if not any("securechat" in item.get("CFBundleURLSchemes", []) for item in url_types):
               url_types.append({"CFBundleURLName": "com.gazinizx.securechat", "CFBundleURLSchemes": ["securechat"]})
@@ -107,7 +100,6 @@ jobs:
           if not any("securechat" in item.get("CFBundleURLSchemes", []) for item in check.get("CFBundleURLTypes", [])):
               raise SystemExit("SecureChat email callback scheme was not added to Info.plist")
           PY
-
       - name: Install Apple signing certificate and provisioning profile
         env:
           IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
@@ -131,7 +123,6 @@ jobs:
           cp "$RUNNER_TEMP/profile.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
           echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-
       - name: Configure manual App Store signing
         env:
           IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
@@ -144,12 +135,10 @@ jobs:
           s = p.read_text()
           team = os.environ["IOS_TEAM_ID"]
           profile = os.environ["PROFILE_UUID"]
-          # Apply explicit distribution signing to the Runner target's Release configuration only.
           pattern = r'(?P<head>[A-F0-9]{24} /\* Release \*/ = \{.*?isa = XCBuildConfiguration;.*?buildSettings = \{)(?P<body>.*?)(?P<tail>\n\s*\};\n\s*name = Release;\n\s*\};)'
           matches = list(re.finditer(pattern, s, re.S))
           if not matches:
               raise SystemExit("Could not find Xcode Release build configurations")
-          # Identify the Runner target's Release configuration by its existing bundle identifier.
           selected = None
           for m in matches:
               body = m.group("body")
@@ -157,7 +146,6 @@ jobs:
                   selected = m
                   break
           if selected is None:
-              # Flutter's generated Runner target uses the product bundle identifier in the Release settings.
               raise SystemExit("Could not identify Runner Release signing configuration")
           body = selected.group("body")
           body = re.sub(r'CODE_SIGN_STYLE = [^;]+;', 'CODE_SIGN_STYLE = Manual;', body)
@@ -176,7 +164,6 @@ jobs:
           p.write_text(updated)
           print("Configured manual distribution signing for Runner Release.")
           PY
-
       - name: Set unique iOS build number
         run: |
           set -euo pipefail
@@ -190,9 +177,7 @@ jobs:
           if n != 1:
               raise SystemExit("Could not set a unique Flutter build number")
           p.write_text(s)
-          print("Set iOS build number to workflow run number.")
           PY
-
       - name: Validate Supabase project endpoint
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -208,7 +193,6 @@ jobs:
               raise SystemExit("SUPABASE_URL secret does not match the verified SecureChat Supabase project endpoint.")
           print("Supabase endpoint verified:", parsed.hostname)
           PY
-
       - name: Build Flutter dependencies and tests
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -217,13 +201,11 @@ jobs:
           flutter pub get
           flutter test
           flutter analyze --no-fatal-infos
-
       - name: Build Android APK
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: flutter build apk --release --dart-define=SUPABASE_URL="$SUPABASE_URL" --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
-
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
@@ -231,7 +213,6 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
-
       - name: Build signed IPA
         env:
           IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
@@ -255,7 +236,6 @@ jobs:
           </plist>
           PLIST
           flutter build ipa --release --export-options-plist="$RUNNER_TEMP/ExportOptions.plist" --dart-define=SUPABASE_URL="$SUPABASE_URL" --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
-
       - name: Upload signed IPA
         uses: actions/upload-artifact@v4
         with:
@@ -263,7 +243,6 @@ jobs:
           path: build/ios/ipa/*.ipa
           if-no-files-found: error
           retention-days: 30
-
       - name: Upload IPA to App Store Connect
         env:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
@@ -278,9 +257,5 @@ jobs:
             fi
           done
           mkdir -p "$HOME/.private_keys"
-          printf '%s' "$APP_STORE_CONNECT_API_PRIVATE_KEY" > "$HOME/.private_keys/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
-          xcrun altool --upload-app \
-            --type ios \
-            --file build/ios/ipa/*.ipa \
-            --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
-            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+          printf '%s' "$APP_STORE_CONNECT_API_PRIVATE_KEY" > "$HOME/.private_keys/AuthKey_$APP_STORE_CONNECT_API_KEY_ID.p8"
+          xcrun altool --upload-app --type ios --file build/ios/ipa/*.ipa --apiKey "$APP_STORE_CONNECT_API_KEY_ID" --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
