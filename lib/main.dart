@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:io';
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
@@ -9,6 +11,8 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'admin_users_screen.dart';
 
+const _storage = FlutterSecureStorage();
+final _cipher = AesGcm.with256bits();
 final _client = Supabase.instance.client;
 bool _supabaseReady = false;
 bool _supabaseInitializing = false;
@@ -140,7 +144,7 @@ class LaunchScreen extends StatelessWidget {
                     border: Border.all(color: const Color(0xFF2A2838)),
                   ),
                   child: const Column(children: [
-                    _FeatureRow(icon: Icons.lock_outline_rounded, title: 'Mesajlaşma', subtitle: 'Metin, fotoğraf ve video gönder.'),
+                    _FeatureRow(icon: Icons.lock_outline_rounded, title: 'Şifreli mesajlaşma', subtitle: 'Mesajlar gönderilmeden önce cihazda şifrelenir.'),
                     SizedBox(height: 18),
                     _FeatureRow(icon: Icons.visibility_off_outlined, title: 'Süreli mesajlar', subtitle: 'İstersen mesajların 2 saatten 1 haftaya kadar sonra silinsin.'),
                     SizedBox(height: 18),
@@ -274,7 +278,7 @@ class _AuthScreenState extends State<AuthScreen> {
         const SizedBox(height: 20),
         FilledButton(onPressed: _busy ? null : _submit, child: Text(_busy ? 'Bekle...' : 'Giriş yap')),
         const SizedBox(height: 12),
-        const Text('Mesajlar ve medya sunucuya şifrelenmeden gönderilir; hassas bilgiler paylaşmayın.'), textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 12)),
+        const Text('Mesajlar cihazda AES-GCM ile şifrelenir. Bu uygulama bağımsız güvenlik denetiminden geçmemiştir.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 12)),
       ]),
     )))),
   );
@@ -300,12 +304,38 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void initState() {
     super.initState();
+    _publishIdentityKey();
     _load();
     _checkAdmin();
     _inboxChannel = _client.channel('securechat-inbox-${_client.auth.currentUser!.id}')
       ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'encrypted_messages', callback: (_) => _load())
       ..subscribe();
   }
+  Future<void> _publishIdentityKey() async {
+    try {
+      final uid = _client.auth.currentUser?.id;
+      if (uid == null) return;
+      var privateValue = await _storage.read(key: 'securechat_identity_private_v1');
+      var publicValue = await _storage.read(key: 'securechat_identity_public_v1');
+      if (privateValue == null || publicValue == null) {
+        final pair = await X25519().newKeyPair();
+        final privateBytes = await pair.extractPrivateKeyBytes();
+        final publicKey = await pair.extractPublicKey();
+        privateValue = base64Encode(privateBytes);
+        publicValue = base64Encode(publicKey.bytes);
+        await _storage.write(key: 'securechat_identity_private_v1', value: privateValue);
+        await _storage.write(key: 'securechat_identity_public_v1', value: publicValue);
+      }
+      await _client.from('user_encryption_keys').upsert({
+        'user_id': uid,
+        'public_key': publicValue,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, onConflict: 'user_id');
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Şifreleme anahtarı hazırlanamadı: $e');
+    }
+  }
+
   Future<void> _load() async {
     try {
       final uid = _client.auth.currentUser!.id;
@@ -465,11 +495,15 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _videoCall = false;
   String? _callStatus;
   bool _renderersReady = false;
+  SecretKey? _key;
+  bool _keyReady = false;
   bool _loading = true;
   bool _sending = false;
   int _expirySeconds = 0;
   String? _error;
   String get _id => widget.conversation['id'].toString();
+  String get _privateKeyName => 'securechat_identity_private_v1';
+  String get _publicKeyName => 'securechat_identity_public_v1';
   @override
   void initState() { super.initState(); _expirySeconds = (widget.conversation['message_expiry_seconds'] as int?) ?? 0; _init(); }
   Future<void> _setExpiry(int seconds) async {
@@ -576,6 +610,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _init() async {
     try {
+      await _ensureConversationKey();
       await _loadMessages();
       _callChannel = _client.channel('call-signals-$_id')..onPostgresChanges(event:PostgresChangeEvent.insert,schema:'public',table:'call_signals',filter:PostgresChangeFilter(type:PostgresChangeFilterType.eq,column:'conversation_id',value:_id),callback:(payload) => _handleCallSignal(Map<String,dynamic>.from(payload.newRecord)))..subscribe();
       _channel = _client.channel('chat-$_id')
@@ -584,24 +619,150 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) { _error = e.toString(); }
     if (mounted) setState(() { _loading = false; });
   }
-  Future<void> _loadMessages() async {
+  Future<SimpleKeyPairData> _loadOrCreateIdentity() async {
+    final savedPrivate = await _storage.read(key: _privateKeyName);
+    final savedPublic = await _storage.read(key: _publicKeyName);
+    if (savedPrivate != null && savedPublic != null) {
+      return SimpleKeyPairData(
+        base64Decode(savedPrivate),
+        publicKey: SimplePublicKey(base64Decode(savedPublic), type: KeyPairType.x25519),
+        type: KeyPairType.x25519,
+      );
+    }
+    final pair = await X25519().newKeyPair();
+    final privateBytes = await pair.extractPrivateKeyBytes();
+    final publicKey = await pair.extractPublicKey();
+    await _storage.write(key: _privateKeyName, value: base64Encode(privateBytes));
+    await _storage.write(key: _publicKeyName, value: base64Encode(publicKey.bytes));
+    return SimpleKeyPairData(
+      privateBytes,
+      publicKey: SimplePublicKey(publicKey.bytes, type: KeyPairType.x25519),
+      type: KeyPairType.x25519,
+    );
+  }
+
+  Future<void> _ensureConversationKey() async {
+    final userId = _client.auth.currentUser?.id;
+    final peerId = _otherMemberId();
+    if (userId == null || peerId == null) {
+      if (mounted) setState(() { _keyReady = false; _error = 'Sohbet üyesi bilgisi eksik. Sohbet listesinden yeniden aç.'; });
+      return;
+    }
     try {
-      final rows = await _client.from('encrypted_messages').select().eq('conversation_id', _id).order('created_at');
-      final now = DateTime.now().toUtc();
-      final decoded = <Map<String,dynamic>>[];
-      for (final row in rows) {
-        final expiresAt = row['expires_at'];
-        if (expiresAt != null && !DateTime.parse(expiresAt.toString()).toUtc().isAfter(now)) continue;
-        final item = Map<String,dynamic>.from(row);
-        item['display_text'] = item['ciphertext']?.toString() ?? '';
-        decoded.add(item);
+      final identity = await _loadOrCreateIdentity();
+      final ownPublic = base64Encode(identity.publicKey.bytes);
+      await _client.from('user_encryption_keys').upsert({
+        'user_id': userId,
+        'public_key': ownPublic,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, onConflict: 'user_id');
+
+      // The peer's inbox publishes its key asynchronously; retry to avoid a race.
+      Map<String, dynamic>? peerRow;
+      for (var attempt = 0; attempt < 15; attempt++) {
+        peerRow = await _client.from('user_encryption_keys')
+            .select('public_key').eq('user_id', peerId).maybeSingle();
+        if (peerRow != null && (peerRow['public_key'] as String? ?? '').isNotEmpty) break;
+        if (attempt < 14) {
+          if (mounted) setState(() {
+            _keyReady = false;
+            _error = 'Karşı tarafın şifreleme anahtarı bekleniyor… (${attempt + 1}/15)';
+          });
+          await Future<void>.delayed(const Duration(seconds: 1));
+        }
       }
-      if (mounted) setState(() { _messages..clear()..addAll(decoded); _error = null; });
-      await _client.rpc('mark_conversation_read', params: {'p_conversation_id': _id});
-    } catch (e) { if (mounted) setState(() => _error = e.toString()); }
+      if (peerRow == null || (peerRow['public_key'] as String? ?? '').isEmpty) {
+        if (mounted) setState(() {
+          _keyReady = false;
+          _error = 'Karşı tarafın şifreleme anahtarı sunucuda görünmüyor. Karşı taraf uygulamayı açıp sohbet listesine girdikten sonra “Yeniden dene”ye bas.';
+        });
+        return;
+      }
+      final remotePublic = SimplePublicKey(base64Decode(peerRow['public_key'] as String), type: KeyPairType.x25519);
+      final shared = await X25519().sharedSecretKey(keyPair: identity, remotePublicKey: remotePublic);
+      final derivedKey = await Hkdf(
+        hmac: Hmac.sha256(),
+        outputLength: 32,
+      ).deriveKey(
+        secretKey: shared,
+        nonce: utf8.encode(_id),
+        info: utf8.encode('SecureChat-E2EE-v1'),
+      );
+      if (mounted) setState(() { _key = derivedKey; _keyReady = true; _error = null; });
+    } catch (e) {
+      if (mounted) setState(() {
+        _keyReady = false;
+        _error = 'Şifreleme anahtarı alınamadı: $e';
+      });
+    }
+  }
+  Future<String> _encrypt(String text) async {
+    final box = await _cipher.encrypt(utf8.encode(text), secretKey: _key!);
+    return jsonEncode({'nonce': base64Encode(box.nonce), 'ciphertext': base64Encode(box.cipherText), 'mac': base64Encode(box.mac.bytes)});
+  }
+  Future<String> _decrypt(String encoded) async {
+    try {
+      final obj = jsonDecode(encoded) as Map<String,dynamic>;
+      final box = SecretBox(base64Decode(obj['ciphertext'] as String), nonce: base64Decode(obj['nonce'] as String), mac: Mac(base64Decode(obj['mac'] as String)));
+      return utf8.decode(await _cipher.decrypt(box, secretKey: _key!));
+    } catch (_) { return 'Bu mesaj çözülemedi. Şifreleme anahtarları uyumlu değil.'; }
+  }
+  bool _loadingMessages = false;
+  bool _reloadMessagesQueued = false;
+
+  Future<void> _loadMessages() async {
+    if (_loadingMessages) {
+      _reloadMessagesQueued = true;
+      return;
+    }
+    _loadingMessages = true;
+    try {
+      do {
+        _reloadMessagesQueued = false;
+        final rows = await _client
+            .from('encrypted_messages')
+            .select()
+            .eq('conversation_id', _id)
+            .order('created_at');
+        final now = DateTime.now().toUtc();
+        final visibleRows = <Map<String, dynamic>>[];
+        for (final row in rows) {
+          final expiresAt = row['expires_at'];
+          if (expiresAt != null &&
+              !DateTime.parse(expiresAt.toString()).toUtc().isAfter(now)) {
+            continue;
+          }
+          visibleRows.add(Map<String, dynamic>.from(row));
+        }
+
+        // Decrypt concurrently to avoid serial crypto work delaying the chat.
+        final decoded = await Future.wait(visibleRows.map((item) async {
+          if (_key != null) {
+            item['display_text'] = await _decrypt(item['ciphertext'] as String);
+          }
+          return item;
+        }));
+
+        if (mounted) {
+          setState(() {
+            _messages
+              ..clear()
+              ..addAll(decoded);
+            _error = null;
+          });
+        }
+        await _client.rpc('mark_conversation_read',
+            params: {'p_conversation_id': _id});
+      } while (_reloadMessagesQueued && mounted);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      _loadingMessages = false;
+    }
   }
   Future<void> _pickAndSendMedia({required bool video}) async {
     if (_mediaBusy || _sending) return;
+    if (!_keyReady || _key == null) { await _ensureConversationKey(); if (!_keyReady || _key == null) return; }
     try {
       final XFile? file = video ? await _picker.pickVideo(source: ImageSource.gallery) : await _picker.pickImage(source: ImageSource.gallery);
       if (file == null) return;
@@ -609,12 +770,14 @@ class _ChatScreenState extends State<ChatScreen> {
       if (bytes.isEmpty) throw Exception('Dosya boş.');
       if (bytes.length > 40 * 1024 * 1024) throw Exception('Dosya en fazla 40 MB olabilir.');
       setState(() => _mediaBusy = true);
+      final mediaBox = await _cipher.encrypt(bytes, secretKey: _key!);
       final extension = file.name.contains('.') ? file.name.split('.').last.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '') : (video ? 'mp4' : 'jpg');
-      final mediaPath = '$_id/${_client.auth.currentUser!.id}/${DateTime.now().microsecondsSinceEpoch}.$extension';
-      final contentType = video ? 'video/mp4' : (extension == 'png' ? 'image/png' : 'image/jpeg');
-      await _client.storage.from('securechat-media').uploadBinary(mediaPath, Uint8List.fromList(bytes), fileOptions: FileOptions(contentType: contentType, upsert: false));
-      final payload = jsonEncode({'kind':'media','media_type': video ? 'video' : 'image','name':file.name,'path':mediaPath});
-      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':payload,'nonce':'','key_version':1,'media_path':mediaPath});
+      final mediaPath = '$_id/${_client.auth.currentUser!.id}/${DateTime.now().microsecondsSinceEpoch}.$extension.enc';
+      await _client.storage.from('securechat-media').uploadBinary(mediaPath, Uint8List.fromList(mediaBox.cipherText), fileOptions: const FileOptions(contentType:'application/octet-stream',upsert:false));
+      final payload = jsonEncode({'kind':'media','media_type': video ? 'video' : 'image','name':file.name,'path':mediaPath,'nonce':base64Encode(mediaBox.nonce),'mac':base64Encode(mediaBox.mac.bytes)});
+      final encrypted = await _encrypt(payload);
+      final envelope = jsonDecode(encrypted) as Map<String,dynamic>;
+      await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'media_path':mediaPath});
       await _loadMessages();
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Medya gönderilemedi: $e'))); }
     finally { if (mounted) setState(() => _mediaBusy = false); }
@@ -622,7 +785,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _showMedia(Map<String,dynamic> media) async {
     try {
-      final clear = await _client.storage.from('securechat-media').download(media['path'] as String);
+      final encryptedBytes = await _client.storage.from('securechat-media').download(media['path'] as String);
+      final clear = await _cipher.decrypt(SecretBox(encryptedBytes, nonce:base64Decode(media['nonce'] as String), mac:Mac(base64Decode(media['mac'] as String))), secretKey:_key!);
       if (!mounted) return;
       if (media['media_type'] == 'image') {
         await showDialog<void>(context:context,builder:(ctx)=>Dialog(child:InteractiveViewer(child:Image.memory(Uint8List.fromList(clear),fit:BoxFit.contain))));
@@ -644,13 +808,16 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _send() async {
+    if (!_keyReady || _key == null) { await _ensureConversationKey(); if (!_keyReady) return; }
     final text = _input.text.trim();
     if (text.isEmpty || _sending) return;
     setState(() => _sending = true);
     try {
+      final encrypted = await _encrypt(text);
+      final obj = jsonDecode(encrypted) as Map<String,dynamic>;
       await _client.from('encrypted_messages').insert({
         'conversation_id': _id, 'sender_id': _client.auth.currentUser!.id,
-        'ciphertext': text, 'nonce': '', 'key_version': 1,
+        'ciphertext': encrypted, 'nonce': obj['nonce'], 'key_version': 1,
       });
       _input.clear();
       await _loadMessages();
@@ -684,6 +851,11 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             children: [
               Text(_error!, style: const TextStyle(color: Colors.redAccent), textAlign: TextAlign.center),
+              if (!_keyReady) TextButton.icon(
+                onPressed: _sending ? null : _ensureConversationKey,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Yeniden dene'),
+              ),
             ],
           ),
         ),
@@ -692,9 +864,9 @@ class _ChatScreenState extends State<ChatScreen> {
           itemBuilder: (context, i) {
             final m = _messages[i];
             final mine = m['sender_id'] == _client.auth.currentUser!.id;
-            final text = m['display_text'] ?? '';
+            final text = _keyReady ? (m['display_text'] ?? 'Şifreli mesaj') : 'Şifreli mesaj';
             Map<String,dynamic>? media;
-            if (text is String) { try { final p = jsonDecode(text); if (p is Map<String,dynamic> && p['kind'] == 'media') media = p; } catch (_) {} }
+            if (_keyReady && text is String) { try { final p = jsonDecode(text); if (p is Map<String,dynamic> && p['kind'] == 'media') media = p; } catch (_) {} }
             return Align(alignment: mine ? Alignment.centerRight : Alignment.centerLeft, child: Container(
               constraints: const BoxConstraints(maxWidth: 310), margin: const EdgeInsets.symmetric(vertical: 4),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -710,7 +882,7 @@ class _ChatScreenState extends State<ChatScreen> {
         SafeArea(top: false, child: Padding(padding: const EdgeInsets.fromLTRB(6, 8, 6, 12), child: Row(children: [
           IconButton(onPressed: _mediaBusy || _sending ? null : () => _pickAndSendMedia(video:false), tooltip:'Fotoğraf', icon:const Icon(Icons.image_outlined)),
           IconButton(onPressed: _mediaBusy || _sending ? null : () => _pickAndSendMedia(video:true), tooltip:'Video', icon:const Icon(Icons.video_library_outlined)),
-          Expanded(child: TextField(controller: _input, minLines: 1, maxLines: 5, textInputAction: TextInputAction.newline, decoration: InputDecoration(hintText: 'Mesaj yaz...', filled: true, fillColor: const Color(0xFF151520), border: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none)))),
+          Expanded(child: TextField(controller: _input, minLines: 1, maxLines: 5, textInputAction: TextInputAction.newline, decoration: InputDecoration(hintText: 'Şifreli mesaj yaz...', filled: true, fillColor: const Color(0xFF151520), border: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none)))),
           const SizedBox(width: 4),
           IconButton.filled(onPressed: _sending || _mediaBusy ? null : _send, icon: _sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send)),
         ]))),
