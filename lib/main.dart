@@ -253,6 +253,15 @@ class _AuthScreenState extends State<AuthScreen> {
         if (!RegExp(r'^[a-z0-9_]{3,32}$').hasMatch(username)) {
           throw const FormatException('Kullanıcı adı 3-32 karakter olmalı (a-z, 0-9, _).');
         }
+        // Check availability before creating the auth account so the user can choose another name.
+        final existing = await _client
+            .from('profiles')
+            .select('username')
+            .eq('username', username)
+            .maybeSingle();
+        if (existing != null) {
+          throw const FormatException('Bu kullanıcı adı kullanılıyor. Lütfen başka bir kullanıcı adı seç.');
+        }
         final result = await _client.auth.signUp(
           email: _email.text.trim(),
           password: _password.text,
