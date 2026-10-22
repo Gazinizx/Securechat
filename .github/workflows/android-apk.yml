@@ -28,7 +28,7 @@ jobs:
           ]
           missing = [name for name in permissions if f'android:name="{name}"' not in s]
           if missing:
-              lines = ''.join(f'    <uses-permission android:name="{name}" />\\n' for name in missing)
+              lines = ''.join(f'    <uses-permission android:name="{name}" />\n' for name in missing)
               if marker not in s:
                   raise SystemExit('Android manifest application marker not found')
               s = s.replace(marker, lines + marker, 1)
