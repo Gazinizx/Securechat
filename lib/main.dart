@@ -460,7 +460,6 @@ class _ChatScreenState extends State<ChatScreen> {
   final _input = TextEditingController();
   final _picker = ImagePicker();
   bool _mediaBusy = false;
-  final _secret = TextEditingController();
   final _scroll = ScrollController();
   final List<Map<String,dynamic>> _messages = [];
   RealtimeChannel? _channel;
@@ -481,7 +480,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _ghostMode = false;
   String? _error;
   String get _id => widget.conversation['id'].toString();
-  String get _keyName => 'securechat_key_$_id';
+  String get _privateKeyName => 'securechat_identity_private_v1';
+  String get _publicKeyName => 'securechat_identity_public_v1';
   @override
   void initState() { super.initState(); _ghostMode = widget.conversation['ghost_mode'] == true; _init(); }
   Future<void> _toggleGhostMode() async {
@@ -587,8 +587,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _init() async {
     try {
-      final saved = await _storage.read(key: _keyName);
-      if (saved != null && saved.isNotEmpty) { _key = await _derive(saved); _keyReady = true; }
+      await _ensureConversationKey();
       await _loadMessages();
       _callChannel = _client.channel('call-signals-$_id')..onPostgresChanges(event:PostgresChangeEvent.insert,schema:'public',table:'call_signals',filter:PostgresChangeFilter(type:PostgresChangeFilterType.eq,column:'conversation_id',value:_id),callback:(payload) => _handleCallSignal(Map<String,dynamic>.from(payload.newRecord)))..subscribe();
       _channel = _client.channel('chat-$_id')
@@ -597,20 +596,58 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) { _error = e.toString(); }
     if (mounted) setState(() { _loading = false; });
   }
-  Future<void> _setSecret() async {
-    final phrase = await showDialog<String>(context: context, builder: (context) => AlertDialog(
-      title: const Text('Sohbet gizli ifadesi'),
-      content: TextField(controller: _secret, obscureText: true, decoration: const InputDecoration(labelText: 'İkinizin de bildiği uzun ifade')),
-      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('İptal')), FilledButton(onPressed: () => Navigator.pop(context, _secret.text), child: const Text('Kaydet'))],
-    ));
-    if (phrase == null || phrase.trim().length < 12) {
-      if (phrase != null && mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('En az 12 karakterlik bir ifade kullan.')));
+  Future<SimpleKeyPairData> _loadOrCreateIdentity() async {
+    final savedPrivate = await _storage.read(key: _privateKeyName);
+    final savedPublic = await _storage.read(key: _publicKeyName);
+    if (savedPrivate != null && savedPublic != null) {
+      return SimpleKeyPairData(
+        base64Decode(savedPrivate),
+        publicKey: SimplePublicKey(base64Decode(savedPublic), type: KeyPairType.x25519),
+        type: KeyPairType.x25519,
+      );
+    }
+    final pair = await X25519().newKeyPair();
+    final privateBytes = await pair.extractPrivateKeyBytes();
+    final publicKey = await pair.extractPublicKey();
+    await _storage.write(key: _privateKeyName, value: base64Encode(privateBytes));
+    await _storage.write(key: _publicKeyName, value: base64Encode(publicKey.bytes));
+    return SimpleKeyPairData(
+      privateBytes,
+      publicKey: SimplePublicKey(publicKey.bytes, type: KeyPairType.x25519),
+      type: KeyPairType.x25519,
+    );
+  }
+
+  Future<void> _ensureConversationKey() async {
+    final userId = _client.auth.currentUser?.id;
+    final peerId = _otherMemberId();
+    if (userId == null || peerId == null) {
+      if (mounted) setState(() { _keyReady = false; _error = 'Sohbet üyesi bilgisi eksik. Sohbet listesinden yeniden aç.'; });
       return;
     }
-    await _storage.write(key: _keyName, value: phrase);
-    _key = await _derive(phrase);
+    final identity = await _loadOrCreateIdentity();
+    final ownPublic = base64Encode(identity.publicKey.bytes);
+    await _client.from('user_encryption_keys').upsert({
+      'user_id': userId,
+      'public_key': ownPublic,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }, onConflict: 'user_id');
+    final peerRow = await _client.from('user_encryption_keys').select('public_key').eq('user_id', peerId).maybeSingle();
+    if (peerRow == null || (peerRow['public_key'] as String? ?? '').isEmpty) {
+      if (mounted) setState(() { _keyReady = false; _error = 'Şifreleme güvenli şekilde hazırlanıyor. Karşı taraf SecureChat’i açtığında tekrar dene.'; });
+      return;
+    }
+    final remotePublic = SimplePublicKey(base64Decode(peerRow['public_key'] as String), type: KeyPairType.x25519);
+    final shared = await X25519().sharedSecretKey(keyPair: identity, remotePublicKey: remotePublic);
+    _key = await Hkdf(
+      hmac: Hmac.sha256(),
+      outputLength: 32,
+    ).deriveKey(
+      secretKey: shared,
+      nonce: utf8.encode(_id),
+      info: utf8.encode('SecureChat-E2EE-v1'),
+    );
     if (mounted) setState(() { _keyReady = true; _error = null; });
-    await _loadMessages();
   }
   Future<String> _encrypt(String text) async {
     final box = await _cipher.encrypt(utf8.encode(text), secretKey: _key!);
@@ -621,7 +658,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final obj = jsonDecode(encoded) as Map<String,dynamic>;
       final box = SecretBox(base64Decode(obj['ciphertext'] as String), nonce: base64Decode(obj['nonce'] as String), mac: Mac(base64Decode(obj['mac'] as String)));
       return utf8.decode(await _cipher.decrypt(box, secretKey: _key!));
-    } catch (_) { return 'Bu mesaj çözülemedi. Gizli ifadeyi kontrol et.'; }
+    } catch (_) { return 'Bu mesaj çözülemedi. Şifreleme anahtarları uyumlu değil.'; }
   }
   Future<void> _loadMessages() async {
     try {
@@ -638,7 +675,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
   Future<void> _pickAndSendMedia({required bool video}) async {
     if (_mediaBusy || _sending) return;
-    if (!_keyReady || _key == null) { await _setSecret(); if (!_keyReady || _key == null) return; }
+    if (!_keyReady || _key == null) { await _ensureConversationKey(); if (!_keyReady || _key == null) return; }
     try {
       final XFile? file = video ? await _picker.pickVideo(source: ImageSource.gallery) : await _picker.pickImage(source: ImageSource.gallery);
       if (file == null) return;
@@ -684,7 +721,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _send() async {
-    if (!_keyReady || _key == null) { await _setSecret(); if (!_keyReady) return; }
+    if (!_keyReady || _key == null) { await _ensureConversationKey(); if (!_keyReady) return; }
     final text = _input.text.trim();
     if (text.isEmpty || _sending) return;
     setState(() => _sending = true);
@@ -716,7 +753,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
   @override
   void dispose() {
-    _input.dispose(); _secret.dispose(); _scroll.dispose();
+    _input.dispose(); _scroll.dispose();
     if (_channel != null) _client.removeChannel(_channel!);
     if (_callChannel != null) _client.removeChannel(_callChannel!);
     if (_renderersReady) { _localRenderer.dispose(); _remoteRenderer.dispose(); }
