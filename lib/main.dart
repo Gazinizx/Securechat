@@ -495,7 +495,6 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hayalet Mod değiştirilemedi: $e')));
     }
   }
-  );
   Future<void> _prepareCall({required bool video}) async {
     if (_callBusy) return;
     setState(() { _callBusy = true; _videoCall = video; _callStatus = null; });
