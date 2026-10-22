@@ -716,6 +716,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _reloadMessagesQueued = true;
       return;
     }
+    // Preserve the reader's position when they scroll up, but follow new
+    // messages when already at the bottom (and on the first load).
+    final wasInitialLoad = _loading;
+    final shouldFollowLatest = !_scroll.hasClients ||
+        (_scroll.position.maxScrollExtent - _scroll.position.pixels < 160);
     _loadingMessages = true;
     try {
       do {
@@ -724,7 +729,10 @@ class _ChatScreenState extends State<ChatScreen> {
             .from('encrypted_messages')
             .select()
             .eq('conversation_id', _id)
-            .order('created_at');
+            // created_at is the authoritative server timestamp. id gives a
+            // deterministic order if multiple rows share the same timestamp.
+            .order('created_at', ascending: true)
+            .order('id', ascending: true);
         final now = DateTime.now().toUtc();
         final visibleRows = <Map<String, dynamic>>[];
         for (final row in rows) {
@@ -751,6 +759,13 @@ class _ChatScreenState extends State<ChatScreen> {
               ..addAll(decoded);
             _error = null;
           });
+          if (wasInitialLoad || shouldFollowLatest) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _scroll.hasClients) {
+                _scroll.jumpTo(_scroll.position.maxScrollExtent);
+              }
+            });
+          }
         }
         await _client.rpc('mark_conversation_delivered',
             params: {'p_conversation_id': _id});
