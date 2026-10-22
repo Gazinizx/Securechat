@@ -64,3 +64,7 @@ create policy "Users can update own encryption key" on public.user_encryption_ke
 grant select, insert, update on public.user_encryption_keys to authenticated;
 revoke update on public.conversations from authenticated;
 grant update (message_expiry_seconds) on public.conversations to authenticated;
+
+drop function if exists public.cleanup_ghost_messages(uuid);
+alter table public.conversations drop column if exists ghost_mode;
+alter table public.encrypted_messages drop column if exists delete_after_read;
