@@ -31,6 +31,40 @@ jobs:
           if [ ! -f android/gradlew ] || [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
             flutter create --platforms=android,ios --org com.securechat.app .
           fi
+      - name: Ensure Android release network permissions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+          android_ns = "http://schemas.android.com/apk/res/android"
+          ET.register_namespace("android", android_ns)
+          required = [
+              "android.permission.INTERNET",
+              "android.permission.CAMERA",
+              "android.permission.RECORD_AUDIO",
+              "android.permission.MODIFY_AUDIO_SETTINGS",
+          ]
+          missing = [p for p in required if f'android:name="{p}"' not in text]
+          if missing:
+              marker = "<application"
+              if marker not in text:
+                  raise SystemExit("AndroidManifest.xml: application tag missing")
+              block = "".join(
+                  f'    <uses-permission android:name="{permission}" />\n'
+                  for permission in missing
+              )
+              text = text.replace(marker, block + marker, 1)
+              manifest.write_text(text)
+          ET.parse(manifest)
+          check = manifest.read_text()
+          if 'android:name="android.permission.INTERNET"' not in check:
+              raise SystemExit("INTERNET permission missing from release manifest")
+          print("Release manifest validated: INTERNET permission is present.")
+          PY
       - name: Install dependencies
         run: flutter pub get
       - name: Build release APK
@@ -38,6 +72,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
+          test -n "$SUPABASE_URL" || (echo "SUPABASE_URL secret is empty" && exit 1)
+          test -n "$SUPABASE_ANON_KEY" || (echo "SUPABASE_ANON_KEY secret is empty" && exit 1)
           flutter build apk --release \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
             --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
@@ -74,11 +110,11 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
+          test -n "$SUPABASE_URL" || (echo "SUPABASE_URL secret is empty" && exit 1)
+          test -n "$SUPABASE_ANON_KEY" || (echo "SUPABASE_ANON_KEY secret is empty" && exit 1)
           flutter build ipa --release --no-codesign \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
             --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
-          # Flutter intentionally skips IPA packaging when codesigning is disabled.
-          # Package the archived app as an unsigned IPA for testing.
           mkdir -p build/ios/ipa/Payload
           cp -R build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app build/ios/ipa/Payload/
           cd build/ios/ipa
