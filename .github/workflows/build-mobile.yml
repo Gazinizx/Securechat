@@ -193,12 +193,12 @@ jobs:
           # Update all generated bundle IDs, then explicitly add the team to
           # every build-configuration setting that contains a bundle ID.
           text, bundle_count = re.subn(
-              r"(?m)^([ \\t]*)PRODUCT_BUNDLE_IDENTIFIER = [^;]+;",
-              lambda m: f"{m.group(1)}PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};",
+              r"PRODUCT_BUNDLE_IDENTIFIER\\s*=\\s*[^;]+;",
+              lambda m: f"PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};",
               text,
           )
           if bundle_count == 0:
-              raise SystemExit("No PRODUCT_BUNDLE_IDENTIFIER setting found in generated Xcode project")
+              raise SystemExit("No PRODUCT_BUNDLE_IDENTIFIER setting found in generated Xcode project; inspect generated pbxproj format")
 
           lines = text.splitlines()
           out = []
