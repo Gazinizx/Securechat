@@ -173,6 +173,8 @@ jobs:
           echo "Signing profile and Team ID validated; bundle identifier detected from profile."
 
       - name: Configure bundle identifier for profile
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
         shell: bash
         run: |
           set -euo pipefail
