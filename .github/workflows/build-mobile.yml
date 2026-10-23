@@ -193,9 +193,11 @@ jobs:
           # identity when DEVELOPMENT_TEAM is absent, and rejects a valid
           # Apple Distribution identity. Set the team in the project so Flutter
           # leaves signing selection to Xcode's manual App Store configuration.
-          text, team_count = re.subn(r'(?m)^([ \\t]*)DEVELOPMENT_TEAM = [^;]+;', rf'\\1DEVELOPMENT_TEAM = {team_id};', text)
+          team_pattern = re.compile(r'(?m)^([ \\t]*)DEVELOPMENT_TEAM = [^;]+;')
+          text, team_count = team_pattern.subn(lambda m: f"{m.group(1)}DEVELOPMENT_TEAM = {team_id};", text)
           if team_count == 0:
-              text, count2 = re.subn(r'(?m)^([ \\t]*)PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', rf'\\1DEVELOPMENT_TEAM = {team_id};\\n\\1PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};', text)
+              bundle_pattern = re.compile(r'(?m)^([ \\t]*)(PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)')
+              text, count2 = bundle_pattern.subn(lambda m: f"{m.group(1)}DEVELOPMENT_TEAM = {team_id};\\n{m.group(1)}{m.group(2)}", text)
               if count2 == 0:
                   raise SystemExit("Could not insert DEVELOPMENT_TEAM into Xcode build settings")
           p.write_text(text)
