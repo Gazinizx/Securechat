@@ -139,8 +139,9 @@ jobs:
           COMPAT_P12_PATH="$RUNNER_TEMP/securechat-signing-compat.p12"
           openssl pkcs12 -in "$P12_PATH" -passin env:IOS_P12_PASSWORD \
             -nodes -out "$PEM_PATH"
-          openssl pkcs12 -export -legacy -in "$PEM_PATH" \
-            -out "$COMPAT_P12_PATH" -passout env:IOS_P12_PASSWORD
+          openssl pkcs12 -export -in "$PEM_PATH" \
+            -out "$COMPAT_P12_PATH" -passout env:IOS_P12_PASSWORD \
+            -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
           rm -f "$PEM_PATH"
           security import "$COMPAT_P12_PATH" \
             -k "$KEYCHAIN_PATH" -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
