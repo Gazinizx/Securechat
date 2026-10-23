@@ -180,30 +180,55 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import os
+          import re
           from pathlib import Path
+
           p = Path("ios/Runner.xcodeproj/project.pbxproj")
           text = p.read_text()
           bundle_id = os.environ["IOS_BUNDLE_ID"]
-          import re
-          text, count = re.subn(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};', text)
-          if count == 0:
-              raise SystemExit("No PRODUCT_BUNDLE_IDENTIFIER setting found in generated Xcode project")
-          team_id = os.environ.get("IOS_TEAM_ID", "")
+          team_id = os.environ["IOS_TEAM_ID"].strip()
           if not team_id:
               raise SystemExit("IOS_TEAM_ID is empty; cannot configure Xcode signing")
-          # Flutter's pre-build certificate selector searches for a Development
-          # identity when DEVELOPMENT_TEAM is absent, and rejects a valid
-          # Apple Distribution identity. Set the team in the project so Flutter
-          # leaves signing selection to Xcode's manual App Store configuration.
-          team_pattern = re.compile(r'(?m)^([ \\t]*)DEVELOPMENT_TEAM = [^;]+;')
-          text, team_count = team_pattern.subn(lambda m: f"{m.group(1)}DEVELOPMENT_TEAM = {team_id};", text)
-          if team_count == 0:
-              bundle_pattern = re.compile(r'(?m)^([ \\t]*)(PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)')
-              text, count2 = bundle_pattern.subn(lambda m: f"{m.group(1)}DEVELOPMENT_TEAM = {team_id};\\n{m.group(1)}{m.group(2)}", text)
-              if count2 == 0:
-                  raise SystemExit("Could not insert DEVELOPMENT_TEAM into Xcode build settings")
-          p.write_text(text)
-          print(f"Configured bundle identifier ({count} settings) and development team ({team_count or 'inserted'} settings).")
+
+          # Update all generated bundle IDs, then explicitly add the team to
+          # every build-configuration setting that contains a bundle ID.
+          text, bundle_count = re.subn(
+              r"(?m)^([ \\t]*)PRODUCT_BUNDLE_IDENTIFIER = [^;]+;",
+              lambda m: f"{m.group(1)}PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};",
+              text,
+          )
+          if bundle_count == 0:
+              raise SystemExit("No PRODUCT_BUNDLE_IDENTIFIER setting found in generated Xcode project")
+
+          lines = text.splitlines()
+          out = []
+          team_count = 0
+          i = 0
+          while i < len(lines):
+              line = lines[i]
+              if "PRODUCT_BUNDLE_IDENTIFIER = " in line:
+                  indent = line[:len(line) - len(line.lstrip(" \\t"))]
+                  # Replace an existing team setting in the same build-settings
+                  # block, or insert one directly above the bundle identifier.
+                  block_start = len(out) - 1
+                  while block_start >= 0 and "buildSettings = {" not in out[block_start]:
+                      block_start -= 1
+                  block_end = i + 1
+                  while block_end < len(lines) and "};" not in lines[block_end]:
+                      block_end += 1
+                  existing = next((j for j in range(block_start + 1, min(block_end + 1, len(out))) if "DEVELOPMENT_TEAM = " in out[j]), None)
+                  if existing is not None:
+                      out[existing] = re.sub(r"DEVELOPMENT_TEAM = [^;]+;", f"DEVELOPMENT_TEAM = {team_id};", out[existing])
+                  else:
+                      out.append(f"{indent}DEVELOPMENT_TEAM = {team_id};")
+                  team_count += 1
+              out.append(line)
+              i += 1
+
+          p.write_text("\\n".join(out) + "\\n")
+          if "DEVELOPMENT_TEAM = " not in p.read_text():
+              raise SystemExit("DEVELOPMENT_TEAM was not written to the Xcode project")
+          print(f"Configured bundle identifier ({bundle_count} settings) and team ({team_count} build settings).")
           PY
 
       - name: Install dependencies
