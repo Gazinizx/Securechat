@@ -129,8 +129,22 @@ jobs:
             echo "::error::IOS_P12_BASE64 did not decode to a readable certificate file"
             exit 1
           fi
-          security import "$P12_PATH" \
+          # Validate the uploaded P12/password pair first. Then re-export it in
+          # legacy PKCS#12 encryption for compatibility with macOS security import.
+          if ! openssl pkcs12 -in "$P12_PATH" -passin env:IOS_P12_PASSWORD -noout; then
+            echo "::error::The decoded P12 cannot be opened with IOS_P12_PASSWORD."
+            exit 1
+          fi
+          PEM_PATH="$RUNNER_TEMP/securechat-signing.pem"
+          COMPAT_P12_PATH="$RUNNER_TEMP/securechat-signing-compat.p12"
+          openssl pkcs12 -in "$P12_PATH" -passin env:IOS_P12_PASSWORD \
+            -nodes -out "$PEM_PATH"
+          openssl pkcs12 -export -legacy -in "$PEM_PATH" \
+            -out "$COMPAT_P12_PATH" -passout env:IOS_P12_PASSWORD
+          rm -f "$PEM_PATH"
+          security import "$COMPAT_P12_PATH" \
             -k "$KEYCHAIN_PATH" -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$P12_PATH" "$COMPAT_P12_PATH"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
 
