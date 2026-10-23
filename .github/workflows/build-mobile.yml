@@ -225,10 +225,26 @@ jobs:
               out.append(line)
               i += 1
 
-          p.write_text("\n".join(out) + "\n")
-          if "DEVELOPMENT_TEAM = " not in p.read_text():
-              raise SystemExit("DEVELOPMENT_TEAM was not written to the Xcode project")
-          print(f"Configured bundle identifier ({bundle_count} settings) and team ({team_count} build settings).")
+          # Force manual App Store signing during the archive stage as well as export.
+          profile_name = os.environ.get("IOS_PROFILE_NAME", "").strip()
+          if not profile_name:
+              raise SystemExit("IOS_PROFILE_NAME is empty; cannot configure manual signing")
+          configured = []
+          for line in out:
+              if "PRODUCT_BUNDLE_IDENTIFIER = " in line:
+                  indent = line[:len(line) - len(line.lstrip(" \\t"))]
+                  configured.extend([
+                      f'{indent}CODE_SIGN_STYLE = Manual;',
+                      f'{indent}CODE_SIGN_IDENTITY = "Apple Distribution";',
+                      f'{indent}PROVISIONING_PROFILE_SPECIFIER = "{profile_name}";',
+                  ])
+              configured.append(line)
+          p.write_text("\n".join(configured) + "\n")
+          final_text = p.read_text()
+          for required in ("DEVELOPMENT_TEAM = ", "CODE_SIGN_STYLE = Manual;", 'CODE_SIGN_IDENTITY = "Apple Distribution";', f'PROVISIONING_PROFILE_SPECIFIER = "{profile_name}";'):
+              if required not in final_text:
+                  raise SystemExit(f"Manual signing setting missing after write: {required}")
+          print(f"Configured bundle identifier ({bundle_count}), team ({team_count}), and manual distribution signing.")
           PY
 
       - name: Install dependencies
