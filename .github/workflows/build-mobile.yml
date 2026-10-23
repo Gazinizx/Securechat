@@ -193,7 +193,7 @@ jobs:
           # Update all generated bundle IDs, then explicitly add the team to
           # every build-configuration setting that contains a bundle ID.
           text, bundle_count = re.subn(
-              r"PRODUCT_BUNDLE_IDENTIFIER\\s*=\\s*[^;]+;",
+              r"PRODUCT_BUNDLE_IDENTIFIER\s*=\s*[^;]+;",
               lambda m: f"PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};",
               text,
           )
@@ -225,7 +225,7 @@ jobs:
               out.append(line)
               i += 1
 
-          p.write_text("\\n".join(out) + "\\n")
+          p.write_text("\n".join(out) + "\n")
           if "DEVELOPMENT_TEAM = " not in p.read_text():
               raise SystemExit("DEVELOPMENT_TEAM was not written to the Xcode project")
           print(f"Configured bundle identifier ({bundle_count} settings) and team ({team_count} build settings).")
