@@ -285,6 +285,31 @@ jobs:
           codesign -dv "$RUNNER_TEMP/ipa-check/Payload/Runner.app" 2>&1 | grep -E 'TeamIdentifier|Identifier'
           echo "Signed IPA verified: $IPA_PATH"
 
+      - name: Upload IPA to App Store Connect
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APP_STORE_CONNECT_API_KEY_ID" || (echo "::error::Missing APP_STORE_CONNECT_API_KEY_ID secret" && exit 1)
+          test -n "$APP_STORE_CONNECT_ISSUER_ID" || (echo "::error::Missing APP_STORE_CONNECT_ISSUER_ID secret" && exit 1)
+          test -n "$APP_STORE_CONNECT_API_KEY_P8" || (echo "::error::Missing APP_STORE_CONNECT_API_KEY_P8 secret" && exit 1)
+
+          KEY_DIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$KEY_DIR"
+          KEY_PATH="$KEY_DIR/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          printf '%s' "$APP_STORE_CONNECT_API_KEY_P8" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+
+          IPA_PATH="$(find build/ios/ipa -maxdepth 1 -name '*.ipa' -print -quit)"
+          test -n "$IPA_PATH" || (echo "::error::No IPA found to upload" && exit 1)
+          xcrun altool --upload-app --type ios --file "$IPA_PATH" \
+            --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+          rm -f "$KEY_PATH"
+
       - name: Upload signed IPA
         uses: actions/upload-artifact@v4
         with:
