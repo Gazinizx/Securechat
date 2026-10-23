@@ -186,8 +186,20 @@ jobs:
           text, count = re.subn(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};', text)
           if count == 0:
               raise SystemExit("No PRODUCT_BUNDLE_IDENTIFIER setting found in generated Xcode project")
+          team_id = os.environ.get("IOS_TEAM_ID", "")
+          if not team_id:
+              raise SystemExit("IOS_TEAM_ID is empty; cannot configure Xcode signing")
+          # Flutter's pre-build certificate selector searches for a Development
+          # identity when DEVELOPMENT_TEAM is absent, and rejects a valid
+          # Apple Distribution identity. Set the team in the project so Flutter
+          # leaves signing selection to Xcode's manual App Store configuration.
+          text, team_count = re.subn(r'(?m)^([ \\t]*)DEVELOPMENT_TEAM = [^;]+;', rf'\\1DEVELOPMENT_TEAM = {team_id};', text)
+          if team_count == 0:
+              text, count2 = re.subn(r'(?m)^([ \\t]*)PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', rf'\\1DEVELOPMENT_TEAM = {team_id};\\n\\1PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};', text)
+              if count2 == 0:
+                  raise SystemExit("Could not insert DEVELOPMENT_TEAM into Xcode build settings")
           p.write_text(text)
-          print(f"Configured {count} bundle identifier settings to match the provisioning profile.")
+          print(f"Configured bundle identifier ({count} settings) and development team ({team_count or 'inserted'} settings).")
           PY
 
       - name: Install dependencies
