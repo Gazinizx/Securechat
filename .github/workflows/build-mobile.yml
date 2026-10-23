@@ -103,6 +103,29 @@ jobs:
           if [ ! -f android/gradlew ] || [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
             flutter create --platforms=android,ios --org com.securechat.app .
           fi
+      - name: Ensure iOS camera purpose string
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+
+          path = Path("ios/Runner/Info.plist")
+          if not path.exists():
+              raise SystemExit("ios/Runner/Info.plist not found after Flutter scaffolding")
+          with path.open("rb") as f:
+              data = plistlib.load(f)
+          data["NSCameraUsageDescription"] = "Securechat uses the camera so you can take and send photos or videos in chats and use the camera during video calls."
+          with path.open("wb") as f:
+              plistlib.dump(data, f, sort_keys=False)
+          with path.open("rb") as f:
+              check = plistlib.load(f)
+          if not check.get("NSCameraUsageDescription", "").strip():
+              raise SystemExit("NSCameraUsageDescription is missing or empty")
+          print("Info.plist validated: NSCameraUsageDescription is present.")
+          PY
+
       - name: Install Apple signing certificate and profile
         env:
           IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
