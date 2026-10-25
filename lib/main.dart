@@ -10,6 +10,7 @@ import 'package:video_player/video_player.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'admin_users_screen.dart';
+import 'push_notifications.dart';
 
 const _storage = FlutterSecureStorage();
 final _cipher = AesGcm.with256bits();
@@ -305,6 +306,7 @@ class _InboxScreenState extends State<InboxScreen> {
   void initState() {
     super.initState();
     _publishIdentityKey();
+    SecurechatPushNotifications.instance.initialize(_client);
     _load();
     _checkAdmin();
     _inboxChannel = _client.channel('securechat-inbox-${_client.auth.currentUser!.id}')
@@ -419,6 +421,7 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void dispose() {
     if (_inboxChannel != null) _client.removeChannel(_inboxChannel!);
+    SecurechatPushNotifications.instance.dispose();
     super.dispose();
   }
   @override
@@ -578,6 +581,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final receiver = _otherMemberId();
     if (receiver == null) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Sohbet üyesi bilgisi eksik; sohbet listesinden yeniden aç.'))); return; }
     await _client.from('call_signals').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'receiver_id':receiver,'signal_type':type,'payload':data});
+    if (type == 'offer') {
+      try { await _client.functions.invoke('securechat-push', body: {'receiver_id': receiver, 'conversation_id': _id, 'kind': 'call', 'video': data['video'] == true}); }
+      catch (e) { debugPrint('Securechat outgoing call push failed: $e'); }
+    }
   }
 
   Future<void> _startCall({required bool video}) async {
@@ -876,6 +883,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         'conversation_id': _id, 'sender_id': _client.auth.currentUser!.id,
         'ciphertext': encrypted, 'nonce': obj['nonce'], 'key_version': 1,
       });
+      final recipientId = _otherMemberId();
+      if (recipientId != null) {
+        try { await _client.functions.invoke('securechat-push', body: {'receiver_id': recipientId, 'conversation_id': _id, 'kind': 'message'}); }
+        catch (e) { debugPrint('Securechat message push failed: $e'); }
+      }
       _input.clear();
       await _loadMessages();
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Mesaj gönderilemedi: $e'))); }
