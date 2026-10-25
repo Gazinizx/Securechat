@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -17,9 +18,11 @@ const _messageChannel = AndroidNotificationChannel(
 class SecurechatPushNotifications {
   SecurechatPushNotifications._();
   static final SecurechatPushNotifications instance = SecurechatPushNotifications._();
+  static final ValueNotifier<Map<String, String>?> openedNotification = ValueNotifier(null);
 
   StreamSubscription<String>? _tokenSubscription;
   StreamSubscription<RemoteMessage>? _foregroundSubscription;
+  StreamSubscription<RemoteMessage>? _openedSubscription;
   bool _initialized = false;
 
   Future<void> initialize(SupabaseClient client) async {
@@ -47,7 +50,10 @@ class SecurechatPushNotifications {
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
         iOS: DarwinInitializationSettings(),
       );
-      await _localNotifications.initialize(initialization);
+      await _localNotifications.initialize(
+        initialization,
+        onDidReceiveNotificationResponse: (response) => _publishOpenPayload(response.payload),
+      );
       final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       await androidPlugin?.createNotificationChannel(_messageChannel);
       final messaging = FirebaseMessaging.instance;
@@ -57,7 +63,12 @@ class SecurechatPushNotifications {
       await _tokenSubscription?.cancel();
       _tokenSubscription = messaging.onTokenRefresh.listen((value) => _saveToken(client, value));
       await _foregroundSubscription?.cancel();
+    await _openedSubscription?.cancel();
       _foregroundSubscription = FirebaseMessaging.onMessage.listen(_showForegroundNotification);
+      await _openedSubscription?.cancel();
+      _openedSubscription = FirebaseMessaging.onMessageOpenedApp.listen((message) => _publishOpenData(message.data));
+      final initialMessage = await messaging.getInitialMessage();
+      if (initialMessage != null) _publishOpenData(initialMessage.data);
       _initialized = true;
       debugPrint('Securechat push initialized.');
     } catch (e, stack) {
@@ -100,8 +111,24 @@ class SecurechatPushNotifications {
         ),
         iOS: DarwinNotificationDetails(presentAlert: true, presentBadge: true, presentSound: true),
       ),
-      payload: message.data['conversation_id']?.toString(),
+      payload: '${message.data['kind'] ?? 'message'}|${message.data['conversation_id'] ?? ''}',
     );
+  }
+
+  void _publishOpenData(Map<String, dynamic> data) {
+    final conversationId = data['conversation_id']?.toString() ?? '';
+    if (conversationId.isEmpty) return;
+    openedNotification.value = {
+      'kind': data['kind']?.toString() ?? 'message',
+      'conversation_id': conversationId,
+    };
+  }
+
+  void _publishOpenPayload(String? payload) {
+    if (payload == null || payload.isEmpty) return;
+    final parts = payload.split('|');
+    if (parts.length < 2 || parts[1].isEmpty) return;
+    _publishOpenData({'kind': parts[0], 'conversation_id': parts[1]});
   }
 
   Future<void> dispose() async {
@@ -109,6 +136,7 @@ class SecurechatPushNotifications {
     await _foregroundSubscription?.cancel();
     _tokenSubscription = null;
     _foregroundSubscription = null;
+    _openedSubscription = null;
     _initialized = false;
   }
 }
