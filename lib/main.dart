@@ -307,6 +307,7 @@ class _InboxScreenState extends State<InboxScreen> {
   void initState() {
     super.initState();
     _publishIdentityKey();
+    SecurechatPushNotifications.openedNotification.addListener(_onPushNotificationOpened);
     SecurechatPushNotifications.instance.initialize(_client);
     _load();
     _checkAdmin();
@@ -314,6 +315,25 @@ class _InboxScreenState extends State<InboxScreen> {
       ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'encrypted_messages', callback: (_) => _load())
       ..subscribe();
   }
+  String? _lastOpenedPush;
+  Future<void> _onPushNotificationOpened() async {
+    final payload = SecurechatPushNotifications.openedNotification.value;
+    if (payload == null) return;
+    final conversationId = payload['conversation_id'];
+    if (conversationId == null || conversationId == _lastOpenedPush) return;
+    _lastOpenedPush = conversationId;
+    await _load();
+    if (!mounted) return;
+    final matches = _chats.where((chat) => chat['id'].toString() == conversationId);
+    if (matches.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bildirimdeki sohbet bulunamadı.')));
+      return;
+    }
+    final chat = matches.first;
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: _title(chat))));
+    if (mounted) await _load();
+  }
+
   Future<void> _publishIdentityKey() async {
     try {
       final uid = _client.auth.currentUser?.id;
@@ -422,6 +442,7 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void dispose() {
     if (_inboxChannel != null) _client.removeChannel(_inboxChannel!);
+    SecurechatPushNotifications.openedNotification.removeListener(_onPushNotificationOpened);
     SecurechatPushNotifications.instance.dispose();
     super.dispose();
   }
@@ -689,6 +710,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       await _ensureConversationKey();
       await _loadMessages();
       _callChannel = _client.channel('call-signals-$_id')..onPostgresChanges(event:PostgresChangeEvent.insert,schema:'public',table:'call_signals',filter:PostgresChangeFilter(type:PostgresChangeFilterType.eq,column:'conversation_id',value:_id),callback:(payload) => _handleCallSignal(Map<String,dynamic>.from(payload.newRecord)))..subscribe();
+      try {
+        final pendingOffers = await _client.from('call_signals')
+          .select('id,conversation_id,sender_id,receiver_id,signal_type,payload,created_at')
+          .eq('conversation_id', _id)
+          .eq('receiver_id', _client.auth.currentUser!.id)
+          .eq('signal_type', 'offer')
+          .order('created_at', ascending: false)
+          .limit(1);
+        if (pendingOffers.isNotEmpty && _peer == null) {
+          final offer = Map<String, dynamic>.from(pendingOffers.first);
+          final createdAt = DateTime.tryParse(offer['created_at']?.toString() ?? '');
+          if (createdAt != null && DateTime.now().toUtc().difference(createdAt.toUtc()).inSeconds.abs() < 90) {
+            await _handleCallSignal(offer);
+          }
+        }
+      } catch (e) {
+        debugPrint('Securechat pending call lookup failed: $e');
+      }
       _channel = _client.channel('chat-$_id')
         ..onPostgresChanges(event: PostgresChangeEvent.all, schema: 'public', table: 'encrypted_messages', filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'conversation_id', value: _id), callback: (_) => _loadMessages())
         ..subscribe();
@@ -871,6 +910,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final encrypted = await _encrypt(payload);
       final envelope = jsonDecode(encrypted) as Map<String,dynamic>;
       await _client.from('encrypted_messages').insert({'conversation_id':_id,'sender_id':_client.auth.currentUser!.id,'ciphertext':encrypted,'nonce':envelope['nonce'],'key_version':1,'media_path':mediaPath});
+      final recipientId = _otherMemberId();
+      if (recipientId != null) {
+        try { await _client.functions.invoke('securechat-push', body: {'receiver_id': recipientId, 'conversation_id': _id, 'kind': 'message'}); }
+        catch (e) { debugPrint('Securechat media push failed: $e'); }
+      }
       await _loadMessages();
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Medya gönderilemedi: $e'))); }
     finally { if (mounted) setState(() => _mediaBusy = false); }
