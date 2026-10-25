@@ -120,7 +120,7 @@ Deno.serve(async (request) => {
             token: row.token,
             notification: { title, body: messageBody },
             data: { kind, conversation_id: conversationId, sender_id: user.id, receiver_id: receiverId, video: String(body.video === true) },
-            android: { priority: "HIGH", notification: { channel_id: "securechat_messages", sound: "default", priority: "HIGH" } },
+            android: { priority: "HIGH", notification: { channel_id: "securechat_messages", sound: "default" } },
             apns: { headers: { "apns-priority": "10" }, payload: { aps: { alert: { title, body: messageBody }, sound: "default", badge: 1, "content-available": 1 } } },
           },
         }),
