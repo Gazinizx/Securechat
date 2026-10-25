@@ -558,10 +558,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           rethrow;
         }
       }
+      _localStream = await navigator.mediaDevices.getUserMedia({'audio':true,'video':video ? {'facingMode':'user'} : false});
+      // Start the microphone foreground service only after Android grants runtime
+      // microphone/camera access, but before the call can move into the background.
       if (Platform.isAndroid) {
         await const MethodChannel('securechat/call_service').invokeMethod('start', {'video': video});
       }
-      _localStream = await navigator.mediaDevices.getUserMedia({'audio':true,'video':video ? {'facingMode':'user'} : false});
       _microphoneMuted = false;
       _cameraEnabled = video;
       _speakerOn = video;
