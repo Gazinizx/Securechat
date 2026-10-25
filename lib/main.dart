@@ -475,7 +475,7 @@ class ChatScreen extends StatefulWidget {
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String _clockLabel(dynamic value) {
     try {
       final date = DateTime.parse(value.toString()).toLocal();
@@ -499,6 +499,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _videoCall = false;
   String? _callStatus;
   bool _renderersReady = false;
+  bool _microphoneMuted = false;
+  bool _speakerOn = false;
+  bool _cameraEnabled = true;
   SecretKey? _key;
   bool _keyReady = false;
   bool _loading = true;
@@ -509,7 +512,17 @@ class _ChatScreenState extends State<ChatScreen> {
   String get _privateKeyName => 'securechat_identity_private_v1_${_client.auth.currentUser!.id}';
   String get _publicKeyName => 'securechat_identity_public_v1_${_client.auth.currentUser!.id}';
   @override
-  void initState() { super.initState(); _expirySeconds = (widget.conversation['message_expiry_seconds'] as int?) ?? 0; _init(); }
+  void initState() { WidgetsBinding.instance.addObserver(this); super.initState(); _expirySeconds = (widget.conversation['message_expiry_seconds'] as int?) ?? 0; _init(); }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Never stop or recreate the WebRTC stream when the screen locks. Android still
+    // needs the declared microphone foreground service to keep capture alive.
+    if (state == AppLifecycleState.resumed && _peer != null && _localStream != null) {
+      for (final track in _localStream!.getAudioTracks()) { track.enabled = !_microphoneMuted; }
+      if (mounted) setState(() {});
+    }
+  }
   Future<void> _setExpiry(int seconds) async {
     try {
       await _client.from('conversations').update({'message_expiry_seconds': seconds}).eq('id', _id);
@@ -542,6 +555,10 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
       _localStream = await navigator.mediaDevices.getUserMedia({'audio':true,'video':video ? {'facingMode':'user'} : false});
+      _microphoneMuted = false;
+      _cameraEnabled = video;
+      _speakerOn = video;
+      await Helper.setSpeakerphoneOn(_speakerOn);
       _localRenderer.srcObject = _localStream;
       _peer = await createPeerConnection({'iceServers':[{'urls':'stun:stun.l.google.com:19302'}]});
       for (final track in _localStream!.getTracks()) { await _peer!.addTrack(track, _localStream!); }
@@ -609,6 +626,10 @@ class _ChatScreenState extends State<ChatScreen> {
       _remoteRenderer.srcObject = null;
     }
     _pendingIce.clear();
+    _microphoneMuted = false;
+    _speakerOn = false;
+    _cameraEnabled = true;
+    try { await Helper.setSpeakerphoneOn(false); } catch (_) {}
     if (mounted) setState(() { _callBusy = false; _callStatus = null; });
   }
 
@@ -860,6 +881,64 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Mesaj gönderilemedi: $e'))); }
     finally { if (mounted) setState(() => _sending = false); }
   }
+  Future<void> _toggleMicrophone() async {
+    final next = !_microphoneMuted;
+    for (final track in _localStream?.getAudioTracks() ?? <MediaStreamTrack>[]) { track.enabled = !next; }
+    if (mounted) setState(() => _microphoneMuted = next);
+  }
+
+  Future<void> _toggleSpeaker() async {
+    final next = !_speakerOn;
+    try { await Helper.setSpeakerphoneOn(next); if (mounted) setState(() => _speakerOn = next); }
+    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ses çıkışı değiştirilemedi: $e'))); }
+  }
+
+  Future<void> _toggleCamera() async {
+    final next = !_cameraEnabled;
+    for (final track in _localStream?.getVideoTracks() ?? <MediaStreamTrack>[]) { track.enabled = next; }
+    if (mounted) setState(() => _cameraEnabled = next);
+  }
+
+  Widget _buildCallScreen() {
+    final connected = (_callStatus ?? '').toLowerCase().contains('bağlandı');
+    return Material(
+      color: const Color(0xFF10131B),
+      child: SafeArea(child: Stack(children: [
+        if (_videoCall && _remoteRenderer.srcObject != null)
+          Positioned.fill(child: RTCVideoView(_remoteRenderer, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))
+        else
+          Positioned.fill(child: DecoratedBox(
+            decoration: const BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF20263A), Color(0xFF090B11)])),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              CircleAvatar(radius: 58, backgroundColor: const Color(0xFF3A435D), child: Text(widget.title.isNotEmpty ? widget.title.substring(0, 1).toUpperCase() : '?', style: const TextStyle(fontSize: 44, fontWeight: FontWeight.w600))),
+              const SizedBox(height: 24),
+              Text(widget.title, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 10),
+              Text(_callStatus ?? 'Arama', style: const TextStyle(fontSize: 15, color: Colors.white70)),
+            ]),
+          )),
+        if (_videoCall && _renderersReady)
+          Positioned(right: 16, top: 18, width: 112, height: 164, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: RTCVideoView(_localRenderer, mirror: true, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))),
+        if (_videoCall && _remoteRenderer.srcObject != null)
+          Positioned(left: 20, top: 24, child: DecoratedBox(decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(16)), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(widget.title, style: const TextStyle(fontWeight: FontWeight.w600)), Text(_callStatus ?? 'Bağlanıyor…', style: const TextStyle(fontSize: 12, color: Colors.white70))])))),
+        Positioned(left: 0, right: 0, bottom: 24, child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (!connected) Padding(padding: const EdgeInsets.only(bottom: 24), child: Text(_callStatus ?? 'Bağlantı kuruluyor…', style: const TextStyle(color: Colors.white70))),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            _callControl(icon: _microphoneMuted ? Icons.mic_off_rounded : Icons.mic_rounded, label: _microphoneMuted ? 'Mikrofon kapalı' : 'Mikrofon', active: _microphoneMuted, onTap: _toggleMicrophone),
+            _callControl(icon: _speakerOn ? Icons.volume_up_rounded : Icons.hearing_rounded, label: _speakerOn ? 'Hoparlör' : 'Telefon', active: _speakerOn, onTap: _toggleSpeaker),
+            if (_videoCall) _callControl(icon: _cameraEnabled ? Icons.videocam_rounded : Icons.videocam_off_rounded, label: 'Kamera', active: !_cameraEnabled, onTap: _toggleCamera),
+            _callControl(icon: Icons.call_end_rounded, label: 'Bitir', danger: true, onTap: () => _endCall()),
+          ]),
+        ])),
+      ])),
+    );
+  }
+
+  Widget _callControl({required IconData icon, required String label, required VoidCallback onTap, bool active = false, bool danger = false}) => Column(mainAxisSize: MainAxisSize.min, children: [
+    Material(color: danger ? const Color(0xFFE53935) : active ? Colors.white : const Color(0xFF343A49), shape: const CircleBorder(), child: InkWell(onTap: onTap, customBorder: const CircleBorder(), child: SizedBox(width: 62, height: 62, child: Icon(icon, color: danger ? Colors.white : active ? const Color(0xFF151821) : Colors.white, size: 27)))),
+    const SizedBox(height: 8), Text(label, style: const TextStyle(fontSize: 11, color: Colors.white)),
+  ]);
+
   Future<void> _leave() async {
     await _endCall();
     
@@ -867,6 +946,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _input.dispose(); _scroll.dispose();
     if (_channel != null) _client.removeChannel(_channel!);
     if (_callChannel != null) _client.removeChannel(_callChannel!);
@@ -880,8 +960,8 @@ class _ChatScreenState extends State<ChatScreen> {
         IconButton(tooltip:'Sesli ara',onPressed:_callBusy || _callStatus != null ? null : () => _startCall(video:false),icon:const Icon(Icons.call_outlined)),
         IconButton(tooltip:'Görüntülü ara',onPressed:_callBusy || _callStatus != null ? null : () => _startCall(video:true),icon:const Icon(Icons.videocam_outlined)),
       ]),
-      body: Column(children: [
-        if (_callStatus != null) Container(padding:const EdgeInsets.all(8),color:const Color(0xFF181824),child:Column(children:[Text(_callStatus!),if (_videoCall) SizedBox(height:180,child:Row(children:[Expanded(child:RTCVideoView(_remoteRenderer,objectFit:RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)),SizedBox(width:90,child:RTCVideoView(_localRenderer,mirror:true))])),TextButton.icon(onPressed:()=>_endCall(),icon:const Icon(Icons.call_end,color:Colors.redAccent),label:const Text('Aramayı bitir'))])),
+      body: Stack(children: [
+        Column(children: [
         if (_error != null) Padding(
           padding: const EdgeInsets.all(8),
           child: Column(
@@ -969,6 +1049,8 @@ class _ChatScreenState extends State<ChatScreen> {
           const SizedBox(width: 4),
           IconButton.filled(onPressed: _sending || _mediaBusy ? null : _send, icon: _sending ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send)),
         ]))),
+        ]),
+        if (_callStatus != null) Positioned.fill(child: _buildCallScreen()),
       ]),
     );
 }
