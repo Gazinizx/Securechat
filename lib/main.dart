@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:io';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -557,6 +558,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           rethrow;
         }
       }
+      if (Platform.isAndroid) {
+        await const MethodChannel('securechat/call_service').invokeMethod('start', {'video': video});
+      }
       _localStream = await navigator.mediaDevices.getUserMedia({'audio':true,'video':video ? {'facingMode':'user'} : false});
       _microphoneMuted = false;
       _cameraEnabled = video;
@@ -637,6 +641,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _speakerOn = false;
     _cameraEnabled = true;
     try { await Helper.setSpeakerphoneOn(false); } catch (_) {}
+    if (Platform.isAndroid) { try { await const MethodChannel('securechat/call_service').invokeMethod('stop'); } catch (e) { debugPrint('Securechat call foreground service stop failed: $e'); } }
     if (mounted) setState(() { _callBusy = false; _callStatus = null; });
   }
 
