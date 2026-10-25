@@ -26,7 +26,9 @@ class SecurechatPushNotifications {
 
   Future<void> initialize(SupabaseClient client) async {
     if (_initialized || client.auth.currentUser == null) return;
-    final apiKey = const String.fromEnvironment('FIREBASE_API_KEY');
+    final androidApiKey = const String.fromEnvironment('FIREBASE_ANDROID_API_KEY');
+    final iosApiKey = const String.fromEnvironment('FIREBASE_IOS_API_KEY');
+    final apiKey = defaultTargetPlatform == TargetPlatform.iOS ? iosApiKey : androidApiKey;
     final projectId = const String.fromEnvironment('FIREBASE_PROJECT_ID');
     final senderId = const String.fromEnvironment('FIREBASE_MESSAGING_SENDER_ID');
     final androidAppId = const String.fromEnvironment('FIREBASE_ANDROID_APP_ID');
