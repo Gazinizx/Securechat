@@ -25,3 +25,22 @@ This is a test build, not a production-ready or independently audited secure mes
 4. Send a small photo and video and open each on the receiving device.
 5. Keep the same chat open on both devices; test voice call, then video call, and hang up from either side.
 6. Repeat in Ghost Mode and verify that read messages and media disappear after leaving the chat while online.
+
+
+## Push notifications and background calls
+
+Supabase remains the authentication, database, realtime and call-signaling backend. Firebase Cloud Messaging is used only as the mobile push transport because Android/iOS do not reliably deliver Supabase Realtime events to an app that is suspended or terminated.
+
+### One-time configuration required
+1. In Firebase Console, create Android and iOS apps for the Securechat Firebase project. For iOS, upload an APNs authentication key in Firebase Console so FCM can deliver notifications to Apple devices.
+2. Add these GitHub Actions repository secrets. They are build-time Firebase client settings, not service-account credentials:
+   - `FIREBASE_API_KEY`
+   - `FIREBASE_PROJECT_ID`
+   - `FIREBASE_MESSAGING_SENDER_ID`
+   - `FIREBASE_ANDROID_APP_ID`
+   - `FIREBASE_IOS_APP_ID`
+3. Apply `supabase/migrations/20261025140000_push_tokens.sql` in the existing project's Supabase SQL Editor. A new project can use the updated `supabase/schema.sql`.
+4. Deploy the Edge Function from this repository with `supabase functions deploy securechat-push`, and set the Edge Function secret `FIREBASE_SERVICE_ACCOUNT_JSON` to the Firebase service-account JSON. Never add that JSON to GitHub or the source code.
+5. Test notifications on real devices with notifications allowed. Android foreground-call capture uses a microphone/camera foreground service; OS permissions and device battery restrictions still apply.
+
+If the Firebase build-time secrets are absent, the app intentionally keeps running but push notifications stay disabled. An incoming notification cannot be delivered reliably to a terminated app until the Edge Function, token table, Firebase project and APNs settings are configured.
