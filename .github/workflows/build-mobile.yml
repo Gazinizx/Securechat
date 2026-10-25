@@ -56,12 +56,12 @@ jobs:
               marker = "compileOptions {"
               if marker not in text:
                   raise SystemExit(f"compileOptions block not found in {gradle}")
-              text = text.replace(marker, marker + "\\n        " + enabled, 1)
+              text = text.replace(marker, marker + "\n        " + enabled, 1)
           if "coreLibraryDesugaring(" not in text and "coreLibraryDesugaring '" not in text:
               marker = "dependencies {"
               if marker not in text:
                   raise SystemExit(f"dependencies block not found in {gradle}")
-              text = text.replace(marker, marker + "\\n    " + dependency, 1)
+              text = text.replace(marker, marker + "\n    " + dependency, 1)
           gradle.write_text(text)
           check = gradle.read_text()
           if enabled not in check or "desugar_jdk_libs" not in check:
