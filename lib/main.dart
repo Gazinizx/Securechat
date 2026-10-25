@@ -602,6 +602,43 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Arama teklifi gönderilemedi: $e'))); await _endCall(sendSignal:false); }
   }
 
+  Future<bool?> _showIncomingCall({required bool video}) {
+    return showGeneralDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: 'Gelen arama',
+      transitionDuration: const Duration(milliseconds: 220),
+      pageBuilder: (ctx, animation, secondaryAnimation) => Scaffold(
+        backgroundColor: const Color(0xFF10131B),
+        body: SafeArea(child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 36),
+          child: Column(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const SizedBox(height: 20),
+            Column(children: [
+              Text(video ? 'Gelen görüntülü arama' : 'Gelen sesli arama', style: const TextStyle(color: Colors.white70, fontSize: 15)),
+              const SizedBox(height: 42),
+              CircleAvatar(radius: 62, backgroundColor: const Color(0xFF3A435D), child: Text(widget.title.isNotEmpty ? widget.title.substring(0, 1).toUpperCase() : '?', style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w600))),
+              const SizedBox(height: 24),
+              Text(widget.title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 12),
+              const Text('Securechat seni arıyor…', style: TextStyle(color: Colors.white60)),
+            ]),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+              Column(children: [
+                Material(color: const Color(0xFFE53935), shape: const CircleBorder(), child: InkWell(customBorder: const CircleBorder(), onTap: () => Navigator.of(ctx).pop(false), child: const SizedBox(width: 76, height: 76, child: Icon(Icons.call_end_rounded, color: Colors.white, size: 32)))),
+                const SizedBox(height: 12), const Text('Reddet'),
+              ]),
+              Column(children: [
+                Material(color: const Color(0xFF25B864), shape: const CircleBorder(), child: InkWell(customBorder: const CircleBorder(), onTap: () => Navigator.of(ctx).pop(true), child: SizedBox(width: 76, height: 76, child: Icon(video ? Icons.videocam_rounded : Icons.call_rounded, color: Colors.white, size: 32)))),
+                const SizedBox(height: 12), const Text('Yanıtla'),
+              ]),
+            ]),
+          ]),
+        )),
+      ),
+    );
+  }
+
   Future<void> _handleCallSignal(Map<String,dynamic> row) async {
     if (row['receiver_id'] != _client.auth.currentUser!.id || row['sender_id'] == _client.auth.currentUser!.id) return;
     final type = row['signal_type'] as String? ?? '';
@@ -609,7 +646,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       if (type == 'offer') {
         if (_peer != null) return;
-        final accept = await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(title:Text(payload['video'] == true ? 'Görüntülü arama' : 'Sesli arama'),content:const Text('Sohbet arkadaşın seni arıyor.'),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Reddet')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Yanıtla'))]));
+        final accept = await _showIncomingCall(video: payload['video'] == true);
         if (accept != true || !mounted) { await _sendSignal('reject',{}); return; }
         await _prepareCall(video:payload['video'] == true);
         if (_peer == null) return;
