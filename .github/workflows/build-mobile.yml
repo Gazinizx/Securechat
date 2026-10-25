@@ -2,6 +2,9 @@ name: Securechat Android APK and iOS IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -29,6 +32,43 @@ jobs:
           if [ ! -f android/gradlew ] || [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
             flutter create --platforms=android,ios --org com.securechat.app .
           fi
+      - name: Enable core library desugaring for local notifications
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          candidates = [Path("android/app/build.gradle.kts"), Path("android/app/build.gradle")]
+          gradle = next((p for p in candidates if p.is_file()), None)
+          if gradle is None:
+              raise SystemExit("Android app Gradle file not found after Flutter scaffolding")
+          text = gradle.read_text()
+
+          if gradle.suffix == ".kts":
+              enabled = "isCoreLibraryDesugaringEnabled = true"
+              dependency = 'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
+          else:
+              enabled = "coreLibraryDesugaringEnabled true"
+              dependency = "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'"
+
+          if "coreLibraryDesugaringEnabled" not in text and "isCoreLibraryDesugaringEnabled" not in text:
+              pattern = r"(compileOptions\\s*\\{)"
+              text, count = re.subn(pattern, r"\\1\\n        " + enabled, text, count=1)
+              if count == 0:
+                  raise SystemExit(f"compileOptions block not found in {gradle}")
+          if "coreLibraryDesugaring(" not in text and "coreLibraryDesugaring '" not in text:
+              match = re.search(r"dependencies\\s*\\{", text)
+              if not match:
+                  raise SystemExit(f"dependencies block not found in {gradle}")
+              text = text[:match.end()] + "\\n    " + dependency + text[match.end():]
+          gradle.write_text(text)
+          check = gradle.read_text()
+          if enabled not in check or "desugar_jdk_libs" not in check:
+              raise SystemExit("Core library desugaring validation failed")
+          print(f"Core library desugaring enabled in {gradle}.")
+          PY
       - name: Ensure Android release network permissions
         shell: bash
         run: |
