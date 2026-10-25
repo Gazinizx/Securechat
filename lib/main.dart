@@ -670,13 +670,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (type == 'offer') {
         if (_peer != null) return;
         final accept = await _showIncomingCall(video: payload['video'] == true);
-        if (accept != true || !mounted) { await _sendSignal('reject',{}); return; }
+        if (accept != true || !mounted) {
+          await _sendSignal('reject',{});
+          try { if (row['id'] != null) await _client.from('call_signals').delete().eq('id', row['id']); } catch (_) {}
+          return;
+        }
         await _prepareCall(video:payload['video'] == true);
         if (_peer == null) return;
         await _peer!.setRemoteDescription(RTCSessionDescription(payload['sdp'] as String?,payload['type'] as String? ?? 'offer'));
         for (final candidate in _pendingIce) { await _peer!.addCandidate(candidate); } _pendingIce.clear();
         final answer = await _peer!.createAnswer(); await _peer!.setLocalDescription(answer);
         await _sendSignal('answer', {'sdp':answer.sdp,'type':answer.type});
+        try { if (row['id'] != null) await _client.from('call_signals').delete().eq('id', row['id']); } catch (_) {}
       } else if (type == 'answer' && _peer != null) {
         await _peer!.setRemoteDescription(RTCSessionDescription(payload['sdp'] as String?,payload['type'] as String? ?? 'answer'));
         for (final candidate in _pendingIce) { await _peer!.addCandidate(candidate); } _pendingIce.clear();
