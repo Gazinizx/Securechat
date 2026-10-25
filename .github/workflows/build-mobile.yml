@@ -254,6 +254,10 @@ jobs:
               data = plistlib.load(f)
           data["NSCameraUsageDescription"] = "Securechat uses the camera for video calls and sending photos or videos."
           data["NSMicrophoneUsageDescription"] = "Securechat uses the microphone for voice and video calls and voice messages."
+          modes = list(data.get("UIBackgroundModes", []))
+          if "audio" not in modes:
+              modes.append("audio")
+          data["UIBackgroundModes"] = modes
           with path.open("wb") as f:
               plistlib.dump(data, f, sort_keys=False)
           with path.open("rb") as f:
