@@ -62,9 +62,8 @@ class SecurechatPushNotifications {
       await _tokenSubscription?.cancel();
       _tokenSubscription = messaging.onTokenRefresh.listen((value) => _saveToken(client, value));
       await _foregroundSubscription?.cancel();
-    await _openedSubscription?.cancel();
-      _foregroundSubscription = FirebaseMessaging.onMessage.listen(_showForegroundNotification);
       await _openedSubscription?.cancel();
+      _foregroundSubscription = FirebaseMessaging.onMessage.listen(_showForegroundNotification);
       _openedSubscription = FirebaseMessaging.onMessageOpenedApp.listen((message) => _publishOpenData(message.data));
       final initialMessage = await messaging.getInitialMessage();
       if (initialMessage != null) _publishOpenData(initialMessage.data);
@@ -133,6 +132,7 @@ class SecurechatPushNotifications {
   Future<void> dispose() async {
     await _tokenSubscription?.cancel();
     await _foregroundSubscription?.cancel();
+    await _openedSubscription?.cancel();
     _tokenSubscription = null;
     _foregroundSubscription = null;
     _openedSubscription = null;
