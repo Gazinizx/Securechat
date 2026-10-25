@@ -2,8 +2,6 @@ name: Securechat Android APK and iOS IPA
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -65,18 +63,159 @@ jobs:
               raise SystemExit("INTERNET permission missing from release manifest")
           print("Release manifest validated: INTERNET permission is present.")
           PY
+      - name: Configure Android call foreground service
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import xml.etree.ElementTree as ET
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+          ns = "http://schemas.android.com/apk/res/android"
+          ET.register_namespace("android", ns)
+          permissions = [
+              "android.permission.FOREGROUND_SERVICE",
+              "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+              "android.permission.FOREGROUND_SERVICE_CAMERA",
+              "android.permission.POST_NOTIFICATIONS",
+              "android.permission.WAKE_LOCK",
+          ]
+          for permission in permissions:
+              if f'android:name="{permission}"' not in text:
+                  text = text.replace("<application", f'    <uses-permission android:name="{permission}" />\\n<application', 1)
+          if "com.securechat.app.CallForegroundService" not in text and 'android:name=".CallForegroundService"' not in text:
+              text = text.replace("<application", '<application', 1)
+              close = "</application>"
+              service = '    <service android:name=".CallForegroundService" android:enabled="true" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone|camera" />\\n'
+              text = text.replace(close, service + close, 1)
+          manifest.write_text(text)
+          ET.parse(manifest)
+
+          main = next(Path("android/app/src/main/kotlin").rglob("MainActivity.kt"))
+          main_text = main.read_text()
+          package_match = re.search(r"^package ([\\w.]+)", main_text, re.M)
+          if not package_match:
+              raise SystemExit("Could not determine MainActivity package")
+          package_name = package_match.group(1)
+          service_path = Path("android/app/src/main/kotlin") / Path(*package_name.split(".")) / "CallForegroundService.kt"
+          service_path.parent.mkdir(parents=True, exist_ok=True)
+          service_path.write_text("""package PACKAGE_NAME
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.Service
+          import android.content.Intent
+          import android.content.pm.ServiceInfo
+          import android.os.Build
+          import android.os.IBinder
+
+          class CallForegroundService : Service() {
+              override fun onCreate() {
+                  super.onCreate()
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      val channel = NotificationChannel(CHANNEL_ID, "Securechat araması", NotificationManager.IMPORTANCE_LOW)
+                      getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+                  }
+              }
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                  val video = intent?.getBooleanExtra("video", false) == true
+                  val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      Notification.Builder(this, CHANNEL_ID)
+                          .setSmallIcon(android.R.drawable.sym_call_outgoing)
+                          .setContentTitle("Securechat araması")
+                          .setContentText(if (video) "Görüntülü görüşme sürüyor" else "Sesli görüşme sürüyor")
+                          .setCategory(Notification.CATEGORY_CALL)
+                          .setOngoing(true)
+                          .build()
+                  } else {
+                      @Suppress("DEPRECATION")
+                      Notification.Builder(this)
+                          .setSmallIcon(android.R.drawable.sym_call_outgoing)
+                          .setContentTitle("Securechat araması")
+                          .setContentText("Görüşme sürüyor")
+                          .setOngoing(true)
+                          .build()
+                  }
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                      var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                      if (video) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                      startForeground(NOTIFICATION_ID, notification, types)
+                  } else {
+                      startForeground(NOTIFICATION_ID, notification)
+                  }
+                  return START_NOT_STICKY
+              }
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              companion object {
+                  private const val CHANNEL_ID = "securechat_call_service"
+                  private const val NOTIFICATION_ID = 4107
+              }
+          }
+          """.replace("PACKAGE_NAME", package_name))
+          if "MethodChannel(flutterEngine.dartExecutor.binaryMessenger, \"securechat/call_service\")" not in main_text:
+              if "import android.content.Intent" not in main_text:
+                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\\nimport android.content.Intent")
+              if "import android.os.Build" not in main_text:
+                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\\nimport android.os.Build")
+              if "import io.flutter.embedding.engine.FlutterEngine" not in main_text:
+                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\\nimport io.flutter.embedding.engine.FlutterEngine")
+              if "import io.flutter.plugin.common.MethodChannel" not in main_text:
+                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\\nimport io.flutter.plugin.common.MethodChannel")
+              main_text = re.sub(
+                  r"class MainActivity : FlutterActivity\\(\\)\\s*\\{?\\s*\\}?",
+                  """class MainActivity : FlutterActivity() {
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "securechat/call_service").setMethodCallHandler { call, result ->
+                      when (call.method) {
+                          "start" -> {
+                              val video = call.argument<Boolean>("video") ?: false
+                              val intent = Intent(this, CallForegroundService::class.java).putExtra("video", video)
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+                              result.success(true)
+                          }
+                          "stop" -> {
+                              stopService(Intent(this, CallForegroundService::class.java))
+                              result.success(true)
+                          }
+                          else -> result.notImplemented()
+                      }
+                  }
+              }
+          }""",
+                  main_text,
+                  count=1,
+              )
+          main.write_text(main_text)
+          print("Android call foreground service and method channel configured.")
+          PY
       - name: Install dependencies
         run: flutter pub get
       - name: Build release APK
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_ANDROID_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
         run: |
           test -n "$SUPABASE_URL" || (echo "SUPABASE_URL secret is empty" && exit 1)
           test -n "$SUPABASE_ANON_KEY" || (echo "SUPABASE_ANON_KEY secret is empty" && exit 1)
           flutter build apk --release \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
-            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \\
+            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \\
+            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \\
+            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \\
+            --dart-define=FIREBASE_ANDROID_APP_ID="$FIREBASE_ANDROID_APP_ID"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -103,27 +242,26 @@ jobs:
           if [ ! -f android/gradlew ] || [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
             flutter create --platforms=android,ios --org com.securechat.app .
           fi
-      - name: Ensure iOS camera purpose string
+      - name: Ensure iOS camera and microphone purpose strings
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import plistlib
           from pathlib import Path
-
           path = Path("ios/Runner/Info.plist")
-          if not path.exists():
-              raise SystemExit("ios/Runner/Info.plist not found after Flutter scaffolding")
           with path.open("rb") as f:
               data = plistlib.load(f)
-          data["NSCameraUsageDescription"] = "Securechat uses the camera so you can take and send photos or videos in chats and use the camera during video calls."
+          data["NSCameraUsageDescription"] = "Securechat uses the camera for video calls and sending photos or videos."
+          data["NSMicrophoneUsageDescription"] = "Securechat uses the microphone for voice and video calls and voice messages."
           with path.open("wb") as f:
               plistlib.dump(data, f, sort_keys=False)
           with path.open("rb") as f:
               check = plistlib.load(f)
-          if not check.get("NSCameraUsageDescription", "").strip():
-              raise SystemExit("NSCameraUsageDescription is missing or empty")
-          print("Info.plist validated: NSCameraUsageDescription is present.")
+          for key in ("NSCameraUsageDescription", "NSMicrophoneUsageDescription"):
+              if not check.get(key, "").strip():
+                  raise SystemExit(f"{key} missing")
+          print("Camera and microphone usage descriptions validated.")
           PY
 
       - name: Install Apple signing certificate and profile
@@ -277,6 +415,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_IOS_APP_ID: ${{ secrets.FIREBASE_IOS_APP_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -300,7 +442,11 @@ jobs:
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
           flutter build ipa --release --export-options-plist="$RUNNER_TEMP/ExportOptions.plist" \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
-            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \\
+            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \\
+            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \\
+            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \\
+            --dart-define=FIREBASE_IOS_APP_ID="$FIREBASE_IOS_APP_ID"
           test -n "$(find build/ios/ipa -maxdepth 1 -name '*.ipa' -print -quit)"
           IPA_PATH="$(find build/ios/ipa -maxdepth 1 -name '*.ipa' -print -quit)"
           unzip -q "$IPA_PATH" -d "$RUNNER_TEMP/ipa-check"
