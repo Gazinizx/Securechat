@@ -38,6 +38,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           candidates = [Path("android/app/build.gradle.kts"), Path("android/app/build.gradle")]
           gradle = next((p for p in candidates if p.is_file()), None)
@@ -53,15 +54,20 @@ jobs:
               dependency = "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'"
 
           if "coreLibraryDesugaringEnabled" not in text and "isCoreLibraryDesugaringEnabled" not in text:
-              marker = "compileOptions {"
-              if marker not in text:
+              match = re.search(r"compileOptions\\s*\\{", text)
+              if not match:
                   raise SystemExit(f"compileOptions block not found in {gradle}")
-              text = text.replace(marker, marker + "\n        " + enabled, 1)
-          if "coreLibraryDesugaring(" not in text and "coreLibraryDesugaring '" not in text:
-              marker = "dependencies {"
-              if marker not in text:
-                  raise SystemExit(f"dependencies block not found in {gradle}")
-              text = text.replace(marker, marker + "\n    " + dependency, 1)
+              insert_at = match.end()
+              text = text[:insert_at] + "\\n        " + enabled + text[insert_at:]
+
+          if "desugar_jdk_libs" not in text:
+              match = re.search(r"dependencies\\s*\\{", text)
+              if match:
+                  insert_at = match.end()
+                  text = text[:insert_at] + "\\n    " + dependency + text[insert_at:]
+              else:
+                  text = text.rstrip() + "\\n\\ndependencies {\\n    " + dependency + "\\n}\\n"
+
           gradle.write_text(text)
           check = gradle.read_text()
           if enabled not in check or "desugar_jdk_libs" not in check:
