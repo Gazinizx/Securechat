@@ -85,18 +85,18 @@ jobs:
           ]
           for permission in permissions:
               if f'android:name="{permission}"' not in text:
-                  text = text.replace("<application", f'    <uses-permission android:name="{permission}" />\\n<application', 1)
+                  text = text.replace("<application", f'    <uses-permission android:name="{permission}" />\n<application', 1)
           if "com.securechat.app.CallForegroundService" not in text and 'android:name=".CallForegroundService"' not in text:
               text = text.replace("<application", '<application', 1)
               close = "</application>"
-              service = '    <service android:name=".CallForegroundService" android:enabled="true" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone|camera" />\\n'
+              service = '    <service android:name=".CallForegroundService" android:enabled="true" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone|camera" />\n'
               text = text.replace(close, service + close, 1)
           manifest.write_text(text)
           ET.parse(manifest)
 
           main = next(Path("android/app/src/main/kotlin").rglob("MainActivity.kt"))
           main_text = main.read_text()
-          package_match = re.search(r"^package ([\\w.]+)", main_text, re.M)
+          package_match = re.search(r"^package ([\w.]+)", main_text, re.M)
           if not package_match:
               raise SystemExit("Could not determine MainActivity package")
           package_name = package_match.group(1)
@@ -161,15 +161,15 @@ jobs:
           """.replace("PACKAGE_NAME", package_name))
           if "MethodChannel(flutterEngine.dartExecutor.binaryMessenger, \"securechat/call_service\")" not in main_text:
               if "import android.content.Intent" not in main_text:
-                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\\nimport android.content.Intent")
+                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\nimport android.content.Intent")
               if "import android.os.Build" not in main_text:
-                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\\nimport android.os.Build")
+                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\nimport android.os.Build")
               if "import io.flutter.embedding.engine.FlutterEngine" not in main_text:
-                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\\nimport io.flutter.embedding.engine.FlutterEngine")
+                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\nimport io.flutter.embedding.engine.FlutterEngine")
               if "import io.flutter.plugin.common.MethodChannel" not in main_text:
-                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\\nimport io.flutter.plugin.common.MethodChannel")
+                  main_text = main_text.replace(package_match.group(0), package_match.group(0) + "\nimport io.flutter.plugin.common.MethodChannel")
               main_text = re.sub(
-                  r"class MainActivity : FlutterActivity\\(\\)\\s*\\{?\\s*\\}?",
+                  r"class MainActivity : FlutterActivity\(\)\s*\{?\s*\}?",
                   """class MainActivity : FlutterActivity() {
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                   super.configureFlutterEngine(flutterEngine)
@@ -211,10 +211,10 @@ jobs:
           test -n "$SUPABASE_ANON_KEY" || (echo "SUPABASE_ANON_KEY secret is empty" && exit 1)
           flutter build apk --release \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
-            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \\
-            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \\
-            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \\
-            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \\
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
+            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \
+            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \
             --dart-define=FIREBASE_ANDROID_APP_ID="$FIREBASE_ANDROID_APP_ID"
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -368,7 +368,7 @@ jobs:
           while i < len(lines):
               line = lines[i]
               if "PRODUCT_BUNDLE_IDENTIFIER = " in line:
-                  indent = line[:len(line) - len(line.lstrip(" \\t"))]
+                  indent = line[:len(line) - len(line.lstrip(" \t"))]
                   # Replace an existing team setting in the same build-settings
                   # block, or insert one directly above the bundle identifier.
                   block_start = len(out) - 1
@@ -393,7 +393,7 @@ jobs:
           configured = []
           for line in out:
               if "PRODUCT_BUNDLE_IDENTIFIER = " in line:
-                  indent = line[:len(line) - len(line.lstrip(" \\t"))]
+                  indent = line[:len(line) - len(line.lstrip(" \t"))]
                   configured.extend([
                       f'{indent}CODE_SIGN_STYLE = Manual;',
                       f'{indent}CODE_SIGN_IDENTITY = "Apple Distribution";',
@@ -442,10 +442,10 @@ jobs:
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
           flutter build ipa --release --export-options-plist="$RUNNER_TEMP/ExportOptions.plist" \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
-            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \\
-            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \\
-            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \\
-            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \\
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
+            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \
+            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \
             --dart-define=FIREBASE_IOS_APP_ID="$FIREBASE_IOS_APP_ID"
           test -n "$(find build/ios/ipa -maxdepth 1 -name '*.ipa' -print -quit)"
           IPA_PATH="$(find build/ios/ipa -maxdepth 1 -name '*.ipa' -print -quit)"
