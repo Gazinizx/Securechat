@@ -105,7 +105,9 @@ Deno.serve(async (request) => {
     const accessToken = await googleAccessToken(account);
     const projectId = account.project_id;
     if (!projectId) throw new Error("Firebase service account project_id is missing");
-    const title = kind === "call" ? "Gelen arama" : "Securechat";
+    const { data: senderProfile } = await admin
+      .from("profiles").select("username").eq("id", user.id).maybeSingle();
+    const title = kind === "call" ? String(senderProfile?.username || "Gelen arama") : "Securechat";
     const messageBody = kind === "call"
       ? (body.video === true ? "Görüntülü arama" : "Sesli arama")
       : "Yeni şifreli mesaj";
@@ -118,10 +120,27 @@ Deno.serve(async (request) => {
         body: JSON.stringify({
           message: {
             token: row.token,
-            notification: { title, body: messageBody },
-            data: { kind, conversation_id: conversationId, sender_id: user.id, receiver_id: receiverId, video: String(body.video === true) },
-            android: { priority: "HIGH", notification: { channel_id: "securechat_messages", sound: "default" } },
-            apns: { headers: { "apns-priority": "10" }, payload: { aps: { alert: { title, body: messageBody }, sound: "default", badge: 1, "content-available": 1 } } },
+            data: {
+              kind,
+              conversation_id: conversationId,
+              sender_id: user.id,
+              receiver_id: receiverId,
+              video: String(body.video === true),
+              title,
+              body: messageBody,
+            },
+            // Android uses a high-priority data-only push so the background
+            // Flutter handler can create a dedicated full-screen call alert.
+            // Keep the standard alert payload for iOS.
+            ...(row.platform === "android"
+              ? { android: { priority: "HIGH", ttl: "60s" } }
+              : {
+                  notification: { title, body: messageBody },
+                  apns: {
+                    headers: { "apns-priority": "10" },
+                    payload: { aps: { alert: { title, body: messageBody }, sound: "default", badge: 1, "content-available": 1 } },
+                  },
+                }),
           },
         }),
       });
@@ -134,7 +153,11 @@ Deno.serve(async (request) => {
       }
     }
     if (invalidTokens.length) await admin.from("push_tokens").delete().in("token", invalidTokens);
-    return new Response(JSON.stringify({ sent, attempted: tokens.length }), { status: 200, headers: { ...corsHeaders, "content-type": "application/json" } });
+    const failed = tokens.length - sent;
+    return new Response(JSON.stringify({ sent, attempted: tokens.length, failed }), {
+      status: sent > 0 || tokens.length === 0 ? 200 : 502,
+      headers: { ...corsHeaders, "content-type": "application/json" },
+    });
   } catch (error) {
     console.error("securechat-push failed:", error);
     return new Response(JSON.stringify({ error: "Push delivery failed" }), { status: 500, headers: { ...corsHeaders, "content-type": "application/json" } });
