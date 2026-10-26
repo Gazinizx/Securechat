@@ -289,6 +289,7 @@ jobs:
           retention-days: 14
 
   ios-ipa:
+    if: github.event_name == 'workflow_dispatch'
     name: Build signed iOS IPA
     runs-on: macos-latest
     timeout-minutes: 60
