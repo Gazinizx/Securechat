@@ -133,7 +133,7 @@ Deno.serve(async (request) => {
             // Flutter handler can create a dedicated full-screen call alert.
             // Keep the standard alert payload for iOS.
             ...(row.platform === "android"
-              ? { android: { priority: "HIGH", ttl: "60s" } }
+              ? { android: { priority: "HIGH", ttl: kind === "call" ? "60s" : "2419200s" } }
               : {
                   notification: { title, body: messageBody },
                   apns: {
