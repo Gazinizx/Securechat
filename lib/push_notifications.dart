@@ -21,6 +21,14 @@ const _callChannel = AndroidNotificationChannel(
   playSound: true,
 );
 
+void registerSecurechatPushBackgroundHandler() {
+  // Register before runApp so cold-start/background FCM messages are routed
+  // even when the authenticated inbox has not been created yet.
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    FirebaseMessaging.onBackgroundMessage(securechatFirebaseMessagingBackgroundHandler);
+  }
+}
+
 FirebaseOptions? _firebaseOptions() {
   final apiKey = const String.fromEnvironment('FIREBASE_ANDROID_API_KEY');
   final projectId = const String.fromEnvironment('FIREBASE_PROJECT_ID');
@@ -107,9 +115,6 @@ class SecurechatPushNotifications {
     try {
       final options = FirebaseOptions(apiKey: apiKey, appId: appId, messagingSenderId: senderId, projectId: projectId);
       if (Firebase.apps.isEmpty) await Firebase.initializeApp(options: options);
-      if (defaultTargetPlatform == TargetPlatform.android) {
-        FirebaseMessaging.onBackgroundMessage(securechatFirebaseMessagingBackgroundHandler);
-      }
       const initialization = InitializationSettings(
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
         iOS: DarwinInitializationSettings(),
