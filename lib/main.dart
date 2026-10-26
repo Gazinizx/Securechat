@@ -22,6 +22,7 @@ String? _supabaseInitError;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  registerSecurechatPushBackgroundHandler();
   runApp(SecureChatApp(
     supabaseUrl: const String.fromEnvironment('SUPABASE_URL'),
     supabaseKey: const String.fromEnvironment('SUPABASE_ANON_KEY'),
