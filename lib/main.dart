@@ -321,8 +321,9 @@ class _InboxScreenState extends State<InboxScreen> {
     final payload = SecurechatPushNotifications.openedNotification.value;
     if (payload == null) return;
     final conversationId = payload['conversation_id'];
-    if (conversationId == null || conversationId == _lastOpenedPush) return;
-    _lastOpenedPush = conversationId;
+    final openKey = '$conversationId|${payload['action'] ?? ''}';
+    if (conversationId == null || openKey == _lastOpenedPush) return;
+    _lastOpenedPush = openKey;
     await _load();
     if (!mounted) return;
     final matches = _chats.where((chat) => chat['id'].toString() == conversationId);
