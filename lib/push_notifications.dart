@@ -81,6 +81,10 @@ Future<void> _showNotification(RemoteMessage message, {required bool fullScreenC
         ticker: isCall ? 'Gelen arama' : 'Yeni mesaj',
         autoCancel: true,
         timeoutAfter: isCall ? 45000 : null,
+        actions: isCall ? const <AndroidNotificationAction>[
+          AndroidNotificationAction('answer', 'Yanıtla', showsUserInterface: true, cancelNotification: true),
+          AndroidNotificationAction('decline', 'Reddet', showsUserInterface: true, cancelNotification: true),
+        ] : null,
       ),
       iOS: const DarwinNotificationDetails(presentAlert: true, presentBadge: true, presentSound: true),
     ),
@@ -121,14 +125,14 @@ class SecurechatPushNotifications {
       );
       await _localNotifications.initialize(
         initialization,
-        onDidReceiveNotificationResponse: (response) => _publishOpenPayload(response.payload),
+        onDidReceiveNotificationResponse: (response) => _publishOpenPayload(response.payload, action: response.actionId),
       );
       final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       await androidPlugin?.createNotificationChannel(_messageChannel);
       await androidPlugin?.createNotificationChannel(_callChannel);
       final launchDetails = await _localNotifications.getNotificationAppLaunchDetails();
       if (launchDetails?.didNotificationLaunchApp == true) {
-        _publishOpenPayload(launchDetails?.notificationResponse?.payload);
+        _publishOpenPayload(launchDetails?.notificationResponse?.payload, action: launchDetails?.notificationResponse?.actionId);
       }
       final messaging = FirebaseMessaging.instance;
       await messaging.requestPermission(alert: true, badge: true, sound: true, provisional: false);
@@ -166,20 +170,21 @@ class SecurechatPushNotifications {
     }
   }
 
-  void _publishOpenData(Map<String, dynamic> data) {
+  void _publishOpenData(Map<String, dynamic> data, {String? action}) {
     final conversationId = data['conversation_id']?.toString() ?? '';
     if (conversationId.isEmpty) return;
     openedNotification.value = {
       'kind': data['kind']?.toString() ?? 'message',
       'conversation_id': conversationId,
+      if (action != null && action.isNotEmpty) 'action': action,
     };
   }
 
-  void _publishOpenPayload(String? payload) {
+  void _publishOpenPayload(String? payload, {String? action}) {
     if (payload == null || payload.isEmpty) return;
     final parts = payload.split('|');
     if (parts.length < 2 || parts[1].isEmpty) return;
-    _publishOpenData({'kind': parts[0], 'conversation_id': parts[1]});
+    _publishOpenData({'kind': parts[0], 'conversation_id': parts[1]}, action: action);
   }
 
   Future<void> dispose() async {
