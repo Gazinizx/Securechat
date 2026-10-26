@@ -331,7 +331,7 @@ class _InboxScreenState extends State<InboxScreen> {
       return;
     }
     final chat = matches.first;
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: _title(chat))));
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat, title: _title(chat), callAction: payload['action']?.toString())));
     if (mounted) await _load();
   }
 
@@ -495,9 +495,10 @@ class _InboxScreenState extends State<InboxScreen> {
 }
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, required this.conversation, required this.title});
+  const ChatScreen({super.key, required this.conversation, required this.title, this.callAction});
   final Map<String,dynamic> conversation;
   final String title;
+  final String? callAction;
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -663,14 +664,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _handleCallSignal(Map<String,dynamic> row) async {
+  Future<void> _handleCallSignal(Map<String,dynamic> row, {String? callAction}) async {
     if (row['receiver_id'] != _client.auth.currentUser!.id || row['sender_id'] == _client.auth.currentUser!.id) return;
     final type = row['signal_type'] as String? ?? '';
     final payload = Map<String,dynamic>.from(row['payload'] as Map? ?? {});
     try {
       if (type == 'offer') {
         if (_peer != null) return;
-        final accept = await _showIncomingCall(video: payload['video'] == true);
+        final accept = callAction == 'answer' ? true : callAction == 'decline' ? false : await _showIncomingCall(video: payload['video'] == true);
         if (accept != true || !mounted) {
           await _sendSignal('reject',{});
           try { if (row['id'] != null) await _client.from('call_signals').delete().eq('id', row['id']); } catch (_) {}
@@ -715,7 +716,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       await _ensureConversationKey();
       await _loadMessages();
-      _callChannel = _client.channel('call-signals-$_id')..onPostgresChanges(event:PostgresChangeEvent.insert,schema:'public',table:'call_signals',filter:PostgresChangeFilter(type:PostgresChangeFilterType.eq,column:'conversation_id',value:_id),callback:(payload) => _handleCallSignal(Map<String,dynamic>.from(payload.newRecord)))..subscribe();
+      _callChannel = _client.channel('call-signals-$_id')..onPostgresChanges(event:PostgresChangeEvent.insert,schema:'public',table:'call_signals',filter:PostgresChangeFilter(type:PostgresChangeFilterType.eq,column:'conversation_id',value:_id),callback:(payload) => _handleCallSignal(Map<String,dynamic>.from(payload.newRecord), callAction: widget.callAction))..subscribe();
       try {
         final pendingOffers = await _client.from('call_signals')
           .select('id,conversation_id,sender_id,receiver_id,signal_type,payload,created_at')
@@ -728,7 +729,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           final offer = Map<String, dynamic>.from(pendingOffers.first);
           final createdAt = DateTime.tryParse(offer['created_at']?.toString() ?? '');
           if (createdAt != null && DateTime.now().toUtc().difference(createdAt.toUtc()).inSeconds.abs() < 90) {
-            await _handleCallSignal(offer);
+            await _handleCallSignal(offer, callAction: widget.callAction);
           }
         }
       } catch (e) {
